@@ -11,7 +11,7 @@ from urllib.parse import urljoin
 from urllib.parse import quote
 
 from config import DataApiConfig, GammaConfig, HttpConfig
-from utils import parse_polymarket_market_or_event_url, slug_variants
+from utils import ensure_datetime_utc, parse_polymarket_market_or_event_url, slug_variants
 
 try:
     import requests
@@ -231,6 +231,71 @@ class GammaClient:
 
         first_empty = left
         return int(first_empty)
+
+    def estimate_markets_start_offset_by_created_at(
+        self,
+        *,
+        created_at_gte: datetime | str,
+        active: bool = True,
+        total_count_hint: int | None = None,
+        **params: Any,
+    ) -> int | None:
+        """
+        Estimate start offset for markets with `createdAt >= created_at_gte`.
+
+        Assumes `/markets` ordering is ascending by `createdAt` (observed behavior).
+        Uses binary search on `limit=1` probes for speed.
+
+        Returns:
+          - offset in [0, total_count] where createdAt first becomes >= threshold
+          - None if probing fails
+        """
+
+        try:
+            threshold = ensure_datetime_utc(created_at_gte)
+        except Exception:
+            return None
+
+        total = int(total_count_hint) if total_count_hint is not None else None
+        if total is None:
+            total = self.estimate_markets_count(active=active, **params)
+        if total is None:
+            return None
+        if total <= 0:
+            return 0
+
+        def _created_at_at(offset: int) -> datetime | None:
+            payload = self.get_markets(active=active, limit=1, offset=int(offset), **params)
+            items = self._extract_list(payload)
+            if not items:
+                return None
+            first = items[0]
+            if not isinstance(first, dict):
+                return None
+            raw = first.get("createdAt") or first.get("created_at")
+            if raw is None:
+                return None
+            try:
+                return ensure_datetime_utc(raw)
+            except Exception:
+                return None
+
+        lo = 0
+        hi = total  # half-open [lo, hi)
+        try:
+            while lo < hi:
+                mid = (lo + hi) // 2
+                dt = _created_at_at(mid)
+                if dt is None:
+                    return None
+                if dt < threshold:
+                    lo = mid + 1
+                else:
+                    hi = mid
+        except Exception:
+            return None
+
+        return int(lo)
 
     def iter_trades(
         self,

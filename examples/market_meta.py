@@ -18,6 +18,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--top", type=int, default=25, help="Number of top markets to return.")
     p.add_argument("--min-liquidity", type=float, default=None, help="Optional min liquidity filter for ranking.")
     p.add_argument("--min-volume-24h", type=float, default=None, help="Optional min 24h volume filter for ranking.")
+    p.add_argument(
+        "--min-created-at",
+        default=None,
+        help="Optional ISO datetime lower bound for market createdAt (example: 2025-01-01T00:00:00Z).",
+    )
     p.add_argument("--out-markets", default=None, help="Optional parquet path for the full market universe.")
     p.add_argument("--out-top", default=None, help="Optional parquet path for ranked top markets.")
     p.add_argument("--out-summary", default=None, help="Optional JSON path for summary statistics.")
@@ -60,6 +65,7 @@ def main(argv: list[str]) -> int:
         top_n=args.top,
         min_liquidity=args.min_liquidity,
         min_volume_24h=args.min_volume_24h,
+        min_created_at=args.min_created_at,
         frame_type=args.frame_type,
         show_progress=not args.no_progress,
         estimate_total=not args.no_estimate,

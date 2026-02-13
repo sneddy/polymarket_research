@@ -84,6 +84,12 @@ By default, metadata download shows a progress bar (works in terminal and notebo
 `top_n` controls only the size of the ranked output (`top_markets`).  
 It does **not** limit how many markets are downloaded; use filters / `max-pages` for that.
 
+You can also cut down collection by creation date:
+
+```bash
+python -m examples.market_meta --active-only --min-created-at "2025-01-01T00:00:00Z" --top 25
+```
+
 Active markets only:
 
 ```bash
@@ -105,6 +111,7 @@ report = collector.download_market_meta(
     top_n=25,
     show_progress=True,
     estimate_total=True,
+    min_created_at="2025-01-01T00:00:00Z",  # optional cutoff
 )
 
 summary = report["summary"]      # dict with universe stats

@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from clients.gamma_client import GammaClient
 from storage.parquet_store import ParquetStore
-from utils import to_snake_case_keys
+from utils import ensure_datetime_utc, to_snake_case_keys
 
 
 logger = logging.getLogger(__name__)
@@ -77,17 +77,42 @@ class MarketsCollector:
         normalize_keys: bool = True,
         show_progress: bool = True,
         estimate_total: bool = True,
+        min_created_at: datetime | str | None = None,
         **params: Any,
     ) -> Any:
+        min_created_dt = ensure_datetime_utc(min_created_at) if min_created_at is not None else None
+        base_params = dict(params)
+        query_params = dict(base_params)
+
         tqdm = _resolve_tqdm(show_progress=show_progress)
         if show_progress and tqdm is None:
             logger.warning("show_progress=True but tqdm is unavailable in the active environment.")
 
+        start_offset = 0
+        total_full: int | None = None
+        if min_created_dt is not None:
+            total_full = self._client.estimate_markets_count(active=active, **base_params)
+            if total_full is not None:
+                seek = self._client.estimate_markets_start_offset_by_created_at(
+                    created_at_gte=min_created_dt,
+                    active=active,
+                    total_count_hint=total_full,
+                    **base_params,
+                )
+                if seek is not None:
+                    start_offset = int(seek)
+
         total = None
         if show_progress and estimate_total:
-            total = self._client.estimate_markets_count(active=active, **params)
-            if total is None:
-                logger.info("Could not estimate total market count; showing open-ended progress.")
+            if min_created_dt is not None:
+                if total_full is not None:
+                    total = max(0, int(total_full) - int(start_offset))
+                if total is None:
+                    logger.info("Could not estimate date-cutoff start offset; showing open-ended progress.")
+            else:
+                total = self._client.estimate_markets_count(active=active, **base_params)
+                if total is None:
+                    logger.info("Could not estimate total market count; showing open-ended progress.")
 
         pbar = (
             tqdm(
@@ -104,8 +129,16 @@ class MarketsCollector:
         rows: list[dict[str, Any]] = []
         progress_every = max(25, int(limit))
         try:
-            for item in self._client.iter_markets(active=active, limit=limit, max_pages=max_pages, **params):
+            for item in self._client.iter_markets(
+                active=active,
+                limit=limit,
+                start_offset=start_offset,
+                max_pages=max_pages,
+                **query_params,
+            ):
                 if not isinstance(item, dict):
+                    continue
+                if min_created_dt is not None and not self._market_created_at_gte(item, min_created_dt):
                     continue
                 rows.append(to_snake_case_keys(item) if normalize_keys else item)
                 if pbar is not None:
@@ -132,6 +165,7 @@ class MarketsCollector:
         dedupe: bool = True,
         show_progress: bool = True,
         estimate_total: bool = True,
+        min_created_at: datetime | str | None = None,
         **params: Any,
     ) -> Any:
         """
@@ -148,19 +182,47 @@ class MarketsCollector:
         if not states:
             raise ValueError("At least one of include_active/include_inactive must be True.")
 
+        min_created_dt = ensure_datetime_utc(min_created_at) if min_created_at is not None else None
+        plain_params = dict(params)
+        base_params = dict(plain_params)
+
         tqdm = _resolve_tqdm(show_progress=show_progress)
         if show_progress and tqdm is None:
             logger.warning("show_progress=True but tqdm is unavailable in the active environment.")
 
         total = None
+        start_offsets: dict[bool, int] = {active: 0 for active in states}
+        full_counts: dict[bool, int | None] = {active: None for active in states}
+        if min_created_dt is not None:
+            for active in states:
+                full_est = self._client.estimate_markets_count(active=active, **plain_params)
+                full_counts[active] = full_est
+                if full_est is None:
+                    continue
+                seek = self._client.estimate_markets_start_offset_by_created_at(
+                    created_at_gte=min_created_dt,
+                    active=active,
+                    total_count_hint=full_est,
+                    **plain_params,
+                )
+                if seek is not None:
+                    start_offsets[active] = int(seek)
+
         if show_progress and estimate_total:
             estimates: list[int] = []
             for active in states:
-                est = self._client.estimate_markets_count(active=active, **params)
-                if est is None:
-                    estimates = []
-                    break
-                estimates.append(int(est))
+                if min_created_dt is not None:
+                    full_est = full_counts.get(active)
+                    if full_est is None:
+                        estimates = []
+                        break
+                    estimates.append(max(0, int(full_est) - int(start_offsets.get(active, 0))))
+                else:
+                    est = self._client.estimate_markets_count(active=active, **plain_params)
+                    if est is None:
+                        estimates = []
+                        break
+                    estimates.append(int(est))
             if estimates:
                 total = int(sum(estimates))
             else:
@@ -187,8 +249,16 @@ class MarketsCollector:
                 if pbar is not None:
                     pbar.set_postfix({"state": state_label, "fetched": len(rows)})
                 try:
-                    for item in self._client.iter_markets(active=active, limit=limit, max_pages=max_pages, **params):
+                    for item in self._client.iter_markets(
+                        active=active,
+                        limit=limit,
+                        start_offset=start_offsets.get(active, 0),
+                        max_pages=max_pages,
+                        **base_params,
+                    ):
                         if not isinstance(item, dict):
+                            continue
+                        if min_created_dt is not None and not self._market_created_at_gte(item, min_created_dt):
                             continue
                         rows.append(to_snake_case_keys(item) if normalize_keys else item)
                         if pbar is not None:
@@ -351,6 +421,7 @@ class MarketsCollector:
         dedupe: bool = True,
         show_progress: bool = True,
         estimate_total: bool = True,
+        min_created_at: datetime | str | None = None,
         **params: Any,
     ) -> dict[str, Any]:
         """
@@ -374,6 +445,7 @@ class MarketsCollector:
             dedupe=dedupe,
             show_progress=show_progress,
             estimate_total=estimate_total,
+            min_created_at=min_created_at,
             **params,
         )
         summary = self.summarize_markets(markets, frame_type=frame_type)
@@ -485,6 +557,17 @@ class MarketsCollector:
             if c in pdf.columns:
                 return pd.to_datetime(pdf[c], utc=True, errors="coerce")
         return pd.Series(index=pdf.index, dtype="datetime64[ns, UTC]")
+
+    @staticmethod
+    def _market_created_at_gte(market: dict[str, Any], threshold: datetime) -> bool:
+        raw = market.get("createdAt") or market.get("created_at")
+        if raw is None:
+            return False
+        try:
+            dt = ensure_datetime_utc(raw)
+        except Exception:
+            return False
+        return dt >= threshold
 
     @staticmethod
     def _to_frame(rows: list[dict[str, Any]], *, frame_type: FrameType | None) -> Any:
