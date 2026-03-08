@@ -128,6 +128,11 @@ class TradesCollector:
 
         Immediately normalizes to a minimal schema:
           timestamp_utc, price, size, outcome, transaction_hash
+
+        Size semantics:
+          - subgraph amounts are often token base units
+          - collector auto-detects likely base-unit scaling and normalizes `size`
+            to contract-size units (with warnings when magnitudes look implausible)
         """
 
         start_dt = ensure_datetime_utc(start_date) if start_date is not None else None
@@ -360,6 +365,8 @@ class TradesCollector:
         Normalize an `orderFilledEvent` to the minimal trade schema.
 
         We infer (price, size, outcome) from maker/taker asset ids + filled amounts.
+        Note: maker/taker filled amounts are ingested as raw values; size normalization
+        (base units -> contract units) is applied centrally in `_finalize`.
         """
 
         ts = TradesCollector._extract_timestamp_seconds(ev)
@@ -442,6 +449,7 @@ class TradesCollector:
 
         This avoids ambiguous outcome inference: `asset_id` is the outcome token id
         we requested from the subgraph, and we compute (price, size) accordingly.
+        Note: filled amounts are kept raw here; size normalization is applied in `_finalize`.
         """
 
         ts = TradesCollector._extract_timestamp_seconds(ev)
@@ -721,6 +729,10 @@ class TradesCollector:
             if start_dt is not None:
                 df = df[df["timestamp_utc"] >= start_dt]
 
+            # Subgraph fill amounts are often raw token base units.
+            # Detect and normalize to contract-size units for research use.
+            df = TradesCollector._normalize_and_validate_size_pandas(df)
+
             # Dedup + order
             subset = ["timestamp_utc", "price", "size", "outcome", "transaction_hash"]
             subset = [c for c in subset if c in df.columns]
@@ -748,6 +760,8 @@ class TradesCollector:
             if start_dt is not None and "timestamp_utc" in df.columns:
                 df = df.filter(pl.col("timestamp_utc") >= start_dt)
 
+            df = TradesCollector._normalize_and_validate_size_polars(df)
+
             subset = ["timestamp_utc", "price", "size", "outcome", "transaction_hash"]
             subset = [c for c in subset if c in df.columns]
             if subset:
@@ -759,3 +773,143 @@ class TradesCollector:
             return df.select([c for c in cols if c in df.columns])
 
         raise ValueError(f"Unknown frame_type: {frame!r}")
+
+    @staticmethod
+    def _normalize_and_validate_size_pandas(df: Any) -> Any:
+        import pandas as pd
+
+        if "size" not in df.columns:
+            return df
+
+        size_series = pd.to_numeric(df["size"], errors="coerce")
+        price_series = (
+            pd.to_numeric(df["price"], errors="coerce") if "price" in df.columns else pd.Series(dtype="float64")
+        )
+
+        scale, reason = TradesCollector._infer_size_scale(
+            size_values=size_series.tolist(),
+            price_values=price_series.tolist() if len(price_series) else None,
+        )
+        if scale != 1.0:
+            logger.warning("Normalizing trade size by /%s (%s).", scale, reason)
+            df = df.copy()
+            df["size"] = size_series / float(scale)
+        else:
+            df = df.copy()
+            df["size"] = size_series
+
+        TradesCollector._warn_if_implausible_size(
+            df["size"].tolist(),
+            scale_used=scale,
+            context="pandas_finalize",
+        )
+        return df
+
+    @staticmethod
+    def _normalize_and_validate_size_polars(df: Any) -> Any:
+        try:
+            import polars as pl
+        except Exception:
+            return df
+
+        if "size" not in df.columns:
+            return df
+
+        size_values = [float(v) for v in df.get_column("size").drop_nulls().to_list()]
+        price_values: list[float] | None = None
+        if "price" in df.columns:
+            price_values = [float(v) for v in df.get_column("price").drop_nulls().to_list()]
+
+        scale, reason = TradesCollector._infer_size_scale(size_values=size_values, price_values=price_values)
+        if scale != 1.0:
+            logger.warning("Normalizing trade size by /%s (%s).", scale, reason)
+            df = df.with_columns((pl.col("size") / float(scale)).alias("size"))
+
+        norm_values = [float(v) for v in df.get_column("size").drop_nulls().to_list()]
+        TradesCollector._warn_if_implausible_size(
+            norm_values,
+            scale_used=scale,
+            context="polars_finalize",
+        )
+        return df
+
+    @staticmethod
+    def _infer_size_scale(
+        *,
+        size_values: list[float],
+        price_values: list[float] | None,
+    ) -> tuple[float, str]:
+        import math
+
+        vals = [float(v) for v in size_values if isinstance(v, (int, float)) and math.isfinite(float(v)) and float(v) > 0]
+        if not vals:
+            return 1.0, "no positive size values"
+        vals.sort()
+
+        q50 = TradesCollector._quantile_sorted(vals, 0.50)
+        q99 = TradesCollector._quantile_sorted(vals, 0.99)
+        int_like_frac = sum(1 for v in vals if abs(v - round(v)) <= 1e-9) / float(len(vals))
+
+        price_prob_like = False
+        if price_values:
+            p = [float(v) for v in price_values if isinstance(v, (int, float)) and math.isfinite(float(v))]
+            if p:
+                in_prob = sum(1 for x in p if 0.0 <= x <= 1.05)
+                price_prob_like = (in_prob / float(len(p))) >= 0.90
+
+        # Strong signal for 1e18-like ERC20 base units.
+        if q50 >= 1e15 or q99 >= 1e17:
+            return 1e18, "size magnitudes are consistent with 1e18 base units"
+
+        # Common Polymarket CLOB case: integer-like raw units with probability-like prices.
+        if q50 >= 1e5 and q99 >= 1e8 and int_like_frac >= 0.90 and price_prob_like:
+            return 1e6, "size appears to be raw base units; applying 1e6 normalization"
+
+        return 1.0, "size appears already normalized"
+
+    @staticmethod
+    def _warn_if_implausible_size(size_values: list[float], *, scale_used: float, context: str) -> None:
+        import math
+
+        vals = [float(v) for v in size_values if isinstance(v, (int, float)) and math.isfinite(float(v)) and float(v) > 0]
+        if not vals:
+            return
+        vals.sort()
+        q50 = TradesCollector._quantile_sorted(vals, 0.50)
+        q99 = TradesCollector._quantile_sorted(vals, 0.99)
+        vmin = vals[0]
+
+        if scale_used == 1.0 and q99 >= 1e8:
+            logger.warning(
+                "Trade size looks implausibly large without scaling (context=%s, q50=%.6g, q99=%.6g). "
+                "Check whether sizes are raw base units.",
+                context,
+                q50,
+                q99,
+            )
+        if q99 > 1e7 or q50 > 1e5 or vmin < 1e-9:
+            logger.warning(
+                "Trade size magnitude may be implausible after normalization (context=%s, scale=%s, min=%.6g, q50=%.6g, q99=%.6g).",
+                context,
+                scale_used,
+                vmin,
+                q50,
+                q99,
+            )
+
+    @staticmethod
+    def _quantile_sorted(values: list[float], q: float) -> float:
+        import math
+
+        if not values:
+            return float("nan")
+        if len(values) == 1:
+            return float(values[0])
+        qq = min(max(float(q), 0.0), 1.0)
+        pos = (len(values) - 1) * qq
+        lo = int(math.floor(pos))
+        hi = int(math.ceil(pos))
+        if lo == hi:
+            return float(values[lo])
+        frac = pos - lo
+        return float(values[lo] * (1.0 - frac) + values[hi] * frac)

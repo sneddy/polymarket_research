@@ -13,6 +13,33 @@ logger = logging.getLogger(__name__)
 
 FrameType = Literal["pandas", "polars"]
 
+_DATETIME_COLUMN_HINTS = (
+    "created_at",
+    "createdAt",
+    "updated_at",
+    "updatedAt",
+    "end_date",
+    "endDate",
+    "start_date",
+    "startDate",
+    "closed_time",
+    "closedTime",
+    "end_date_iso",
+    "endDateIso",
+    "start_date_iso",
+    "startDateIso",
+    "timestamp_utc",
+    "timestamp",
+)
+
+_RANK_REQUIRED_ALIAS_GROUPS: dict[str, tuple[str, ...]] = {
+    "identifier": ("condition_id", "conditionId", "id", "slug"),
+    "question": ("question",),
+    "liquidity": ("liquidity_clob", "liquidity_num", "liquidity"),
+    "volume_24h": ("volume24hr_clob", "volume24hr"),
+    "spread": ("spread",),
+}
+
 
 def _default_frame_type() -> FrameType:
     try:
@@ -83,15 +110,22 @@ class MarketsCollector:
         min_created_dt = ensure_datetime_utc(min_created_at) if min_created_at is not None else None
         base_params = dict(params)
         query_params = dict(base_params)
+        count_cache: dict[bool, int | None] = {}
 
         tqdm = _resolve_tqdm(show_progress=show_progress)
         if show_progress and tqdm is None:
             logger.warning("show_progress=True but tqdm is unavailable in the active environment.")
 
+        def _estimate_count_cached(state_active: bool) -> int | None:
+            if state_active not in count_cache:
+                count_cache[state_active] = self._client.estimate_markets_count(active=state_active, **base_params)
+            return count_cache[state_active]
+
         start_offset = 0
         total_full: int | None = None
+        estimated_remaining: int | None = None
         if min_created_dt is not None:
-            total_full = self._client.estimate_markets_count(active=active, **base_params)
+            total_full = _estimate_count_cached(active)
             if total_full is not None:
                 seek = self._client.estimate_markets_start_offset_by_created_at(
                     created_at_gte=min_created_dt,
@@ -101,18 +135,29 @@ class MarketsCollector:
                 )
                 if seek is not None:
                     start_offset = int(seek)
+                estimated_remaining = max(0, int(total_full) - int(start_offset))
 
         total = None
         if show_progress and estimate_total:
             if min_created_dt is not None:
-                if total_full is not None:
-                    total = max(0, int(total_full) - int(start_offset))
+                if estimated_remaining is not None:
+                    total = int(estimated_remaining)
                 if total is None:
                     logger.info("Could not estimate date-cutoff start offset; showing open-ended progress.")
             else:
-                total = self._client.estimate_markets_count(active=active, **base_params)
+                total = _estimate_count_cached(active)
                 if total is None:
                     logger.info("Could not estimate total market count; showing open-ended progress.")
+
+        effective_max_pages = max_pages
+        if estimated_remaining is not None and int(limit) > 0:
+            pages_needed = int((int(estimated_remaining) + int(limit) - 1) // int(limit))
+            if pages_needed <= 0:
+                pages_needed = 1
+            if effective_max_pages is None:
+                effective_max_pages = pages_needed
+            else:
+                effective_max_pages = min(int(effective_max_pages), pages_needed)
 
         pbar = (
             tqdm(
@@ -128,29 +173,52 @@ class MarketsCollector:
 
         rows: list[dict[str, Any]] = []
         progress_every = max(25, int(limit))
+        inferred_descending: bool | None = None
+        prev_created_at: datetime | None = None
+        stopped_early = False
         try:
             for item in self._client.iter_markets(
                 active=active,
                 limit=limit,
                 start_offset=start_offset,
-                max_pages=max_pages,
+                max_pages=effective_max_pages,
                 **query_params,
             ):
                 if not isinstance(item, dict):
                     continue
-                if min_created_dt is not None and not self._market_created_at_gte(item, min_created_dt):
-                    continue
+                created_at = self._extract_market_created_at(item)
+                if created_at is not None and prev_created_at is not None and inferred_descending is None:
+                    if created_at < prev_created_at:
+                        inferred_descending = True
+                    elif created_at > prev_created_at:
+                        inferred_descending = False
+                if created_at is not None:
+                    prev_created_at = created_at
+
+                if min_created_dt is not None:
+                    if created_at is None:
+                        continue
+                    if created_at < min_created_dt:
+                        # If feed is descending by created_at, remaining pages are older.
+                        if inferred_descending is True:
+                            stopped_early = True
+                            break
+                        continue
                 rows.append(to_snake_case_keys(item) if normalize_keys else item)
                 if pbar is not None:
                     pbar.update(1)
                     if len(rows) % progress_every == 0:
                         pbar.set_postfix({"fetched": len(rows), "state": "active" if active else "inactive"})
             if pbar is not None:
-                pbar.set_postfix({"fetched": len(rows), "state": "active" if active else "inactive"})
+                postfix = {"fetched": len(rows), "state": "active" if active else "inactive"}
+                if stopped_early:
+                    postfix["cutoff_stop"] = True
+                pbar.set_postfix(postfix)
         finally:
             if pbar is not None:
                 pbar.close()
 
+        rows = self._sort_market_rows(rows, normalized=normalize_keys)
         return self._to_frame(rows, frame_type=frame_type)
 
     def download_market_universe(
@@ -185,18 +253,23 @@ class MarketsCollector:
         min_created_dt = ensure_datetime_utc(min_created_at) if min_created_at is not None else None
         plain_params = dict(params)
         base_params = dict(plain_params)
+        count_cache: dict[bool, int | None] = {}
 
         tqdm = _resolve_tqdm(show_progress=show_progress)
         if show_progress and tqdm is None:
             logger.warning("show_progress=True but tqdm is unavailable in the active environment.")
 
+        def _estimate_count_cached(state_active: bool) -> int | None:
+            if state_active not in count_cache:
+                count_cache[state_active] = self._client.estimate_markets_count(active=state_active, **plain_params)
+            return count_cache[state_active]
+
         total = None
         start_offsets: dict[bool, int] = {active: 0 for active in states}
-        full_counts: dict[bool, int | None] = {active: None for active in states}
+        estimated_remaining: dict[bool, int | None] = {active: None for active in states}
         if min_created_dt is not None:
             for active in states:
-                full_est = self._client.estimate_markets_count(active=active, **plain_params)
-                full_counts[active] = full_est
+                full_est = _estimate_count_cached(active)
                 if full_est is None:
                     continue
                 seek = self._client.estimate_markets_start_offset_by_created_at(
@@ -207,18 +280,19 @@ class MarketsCollector:
                 )
                 if seek is not None:
                     start_offsets[active] = int(seek)
+                estimated_remaining[active] = max(0, int(full_est) - int(start_offsets[active]))
 
         if show_progress and estimate_total:
             estimates: list[int] = []
             for active in states:
                 if min_created_dt is not None:
-                    full_est = full_counts.get(active)
-                    if full_est is None:
+                    remain = estimated_remaining.get(active)
+                    if remain is None:
                         estimates = []
                         break
-                    estimates.append(max(0, int(full_est) - int(start_offsets.get(active, 0))))
+                    estimates.append(int(remain))
                 else:
-                    est = self._client.estimate_markets_count(active=active, **plain_params)
+                    est = _estimate_count_cached(active)
                     if est is None:
                         estimates = []
                         break
@@ -248,23 +322,54 @@ class MarketsCollector:
                 state_label = "active" if active else "inactive"
                 if pbar is not None:
                     pbar.set_postfix({"state": state_label, "fetched": len(rows)})
+                effective_max_pages = max_pages
+                remain = estimated_remaining.get(active)
+                if remain is not None and int(limit) > 0:
+                    pages_needed = int((int(remain) + int(limit) - 1) // int(limit))
+                    if pages_needed <= 0:
+                        pages_needed = 1
+                    if effective_max_pages is None:
+                        effective_max_pages = pages_needed
+                    else:
+                        effective_max_pages = min(int(effective_max_pages), pages_needed)
+
+                inferred_descending: bool | None = None
+                prev_created_at: datetime | None = None
+                state_stopped_early = False
                 try:
                     for item in self._client.iter_markets(
                         active=active,
                         limit=limit,
                         start_offset=start_offsets.get(active, 0),
-                        max_pages=max_pages,
+                        max_pages=effective_max_pages,
                         **base_params,
                     ):
                         if not isinstance(item, dict):
                             continue
-                        if min_created_dt is not None and not self._market_created_at_gte(item, min_created_dt):
-                            continue
+                        created_at = self._extract_market_created_at(item)
+                        if created_at is not None and prev_created_at is not None and inferred_descending is None:
+                            if created_at < prev_created_at:
+                                inferred_descending = True
+                            elif created_at > prev_created_at:
+                                inferred_descending = False
+                        if created_at is not None:
+                            prev_created_at = created_at
+
+                        if min_created_dt is not None:
+                            if created_at is None:
+                                continue
+                            if created_at < min_created_dt:
+                                if inferred_descending is True:
+                                    state_stopped_early = True
+                                    break
+                                continue
                         rows.append(to_snake_case_keys(item) if normalize_keys else item)
                         if pbar is not None:
                             pbar.update(1)
                             if len(rows) % progress_every == 0:
                                 pbar.set_postfix({"state": state_label, "fetched": len(rows)})
+                    if state_stopped_early and pbar is not None:
+                        pbar.set_postfix({"state": state_label, "fetched": len(rows), "cutoff_stop": True})
                 except Exception as e:
                     errors.append(f"active={active}: {type(e).__name__}: {e}")
                     logger.warning("Market universe fetch failed for active=%s: %s", active, e)
@@ -281,6 +386,7 @@ class MarketsCollector:
 
         if dedupe:
             rows = self._dedupe_market_rows(rows, normalized=normalize_keys)
+        rows = self._sort_market_rows(rows, normalized=normalize_keys)
 
         return self._to_frame(rows, frame_type=frame_type)
 
@@ -336,6 +442,8 @@ class MarketsCollector:
         top_n: int = 25,
         min_liquidity: float | None = None,
         min_volume_24h: float | None = None,
+        validate_schema: bool = False,
+        required_columns: list[str] | None = None,
         frame_type: FrameType | None = None,
     ) -> Any:
         """
@@ -347,6 +455,8 @@ class MarketsCollector:
         pdf = self._to_pandas(df).copy()
         if pdf.empty:
             return self._to_frame([], frame_type=frame_type)
+        if validate_schema:
+            self._validate_rank_schema(pdf, required_columns=required_columns)
 
         work = pd.DataFrame(index=pdf.index)
         work["condition_id"] = self._coalesce_text_series(pdf, ["condition_id", "conditionId"])
@@ -354,6 +464,7 @@ class MarketsCollector:
         work["question"] = self._coalesce_text_series(pdf, ["question"])
         work["active"] = self._coerce_bool_series(pdf, ["active"])
         work["closed"] = self._coerce_bool_series(pdf, ["closed"])
+        work["created_at"] = self._coalesce_datetime_series(pdf, ["created_at", "createdAt"])
         work["liquidity"] = self._coalesce_numeric_series(pdf, ["liquidity_clob", "liquidity_num", "liquidity"])
         work["volume_total"] = self._coalesce_numeric_series(pdf, ["volume_clob", "volume_num", "volume"])
         work["volume_24h"] = self._coalesce_numeric_series(pdf, ["volume24hr_clob", "volume24hr"])
@@ -385,7 +496,11 @@ class MarketsCollector:
             + 0.05 * work["spread_quality_pct"]
         )
 
-        ranked = work.sort_values(["market_score", "volume_24h", "liquidity"], ascending=[False, False, False])
+        ranked = work.sort_values(
+            ["market_score", "volume_24h", "liquidity", "created_at"],
+            ascending=[False, False, False, False],
+            kind="stable",
+        )
         if top_n > 0:
             ranked = ranked.head(int(top_n))
 
@@ -416,6 +531,8 @@ class MarketsCollector:
         top_n: int = 25,
         min_liquidity: float | None = None,
         min_volume_24h: float | None = None,
+        validate_rank_schema: bool = False,
+        rank_required_columns: list[str] | None = None,
         frame_type: FrameType | None = None,
         normalize_keys: bool = True,
         dedupe: bool = True,
@@ -454,6 +571,8 @@ class MarketsCollector:
             top_n=top_n,
             min_liquidity=min_liquidity,
             min_volume_24h=min_volume_24h,
+            validate_schema=validate_rank_schema,
+            required_columns=rank_required_columns,
             frame_type=frame_type,
         )
         return {"markets": markets, "summary": summary, "top_markets": top_markets}
@@ -519,8 +638,8 @@ class MarketsCollector:
 
         for c in candidates:
             if c in pdf.columns:
-                return pd.to_numeric(pdf[c], errors="coerce").fillna(0.0)
-        return pd.Series(0.0, index=pdf.index, dtype="float64")
+                return pd.to_numeric(pdf[c], errors="coerce")
+        return pd.Series(float("nan"), index=pdf.index, dtype="float64")
 
     @staticmethod
     def _coerce_bool_series(pdf: Any, candidates: list[str]) -> Any:
@@ -559,15 +678,58 @@ class MarketsCollector:
         return pd.Series(index=pdf.index, dtype="datetime64[ns, UTC]")
 
     @staticmethod
-    def _market_created_at_gte(market: dict[str, Any], threshold: datetime) -> bool:
+    def _extract_market_created_at(market: dict[str, Any]) -> datetime | None:
         raw = market.get("createdAt") or market.get("created_at")
         if raw is None:
-            return False
+            return None
         try:
-            dt = ensure_datetime_utc(raw)
+            return ensure_datetime_utc(raw)
         except Exception:
+            return None
+
+    @staticmethod
+    def _market_created_at_gte(market: dict[str, Any], threshold: datetime) -> bool:
+        dt = MarketsCollector._extract_market_created_at(market)
+        if dt is None:
             return False
-        return dt >= threshold
+        return bool(dt >= threshold)
+
+    @staticmethod
+    def _sort_market_rows(rows: list[dict[str, Any]], *, normalized: bool) -> list[dict[str, Any]]:
+        max_dt = datetime.max.replace(tzinfo=UTC)
+        id_candidates = ("condition_id", "id", "slug") if normalized else ("conditionId", "condition_id", "id", "slug")
+
+        def _row_key(row: dict[str, Any]) -> tuple[Any, ...]:
+            dt = MarketsCollector._extract_market_created_at(row)
+            first_id = ""
+            for cand in id_candidates:
+                v = row.get(cand)
+                if v is not None and str(v).strip():
+                    first_id = str(v).strip()
+                    break
+            slug = str(row.get("slug") or "")
+            has_dt = 0 if dt is not None else 1
+            return (has_dt, dt or max_dt, first_id, slug)
+
+        return sorted([r for r in rows if isinstance(r, dict)], key=_row_key)
+
+    @staticmethod
+    def _validate_rank_schema(pdf: Any, *, required_columns: list[str] | None = None) -> None:
+        if required_columns:
+            missing = [c for c in required_columns if c not in pdf.columns]
+            if missing:
+                raise ValueError(f"rank_markets schema validation failed; missing required columns: {missing}")
+            return
+
+        missing_groups: list[str] = []
+        for logical_name, aliases in _RANK_REQUIRED_ALIAS_GROUPS.items():
+            if not any(alias in pdf.columns for alias in aliases):
+                missing_groups.append(f"{logical_name} (any of {list(aliases)})")
+        if missing_groups:
+            raise ValueError(
+                "rank_markets schema validation failed; missing required logical fields: "
+                + ", ".join(missing_groups)
+            )
 
     @staticmethod
     def _to_frame(rows: list[dict[str, Any]], *, frame_type: FrameType | None) -> Any:
@@ -576,26 +738,33 @@ class MarketsCollector:
             import pandas as pd
 
             df = pd.DataFrame(rows)
-            for col in df.columns:
-                if any(s in col for s in ("date", "_at", "timestamp")):
-                    if df[col].dtype == object:
-                        df[col] = pd.to_datetime(df[col].astype("string").str.replace("Z", "+00:00", regex=False), errors="ignore", utc=True)
+            for col in _DATETIME_COLUMN_HINTS:
+                if col not in df.columns:
+                    continue
+                dtype_s = str(df[col].dtype).lower()
+                if df[col].dtype == object or "string" in dtype_s:
+                    df[col] = pd.to_datetime(
+                        df[col].astype("string").str.replace("Z", "+00:00", regex=False),
+                        errors="coerce",
+                        utc=True,
+                    )
             return df
 
         if frame == "polars":
             import polars as pl
 
             df = pl.DataFrame(rows)
-            for col in df.columns:
-                if any(s in col for s in ("date", "_at", "timestamp")):
-                    if df.schema[col] == pl.Utf8:
-                        df = df.with_columns(
-                            pl.col(col)
-                            .str.replace("Z$", "+00:00")
-                            .str.strptime(pl.Datetime, strict=False)
-                            .dt.replace_time_zone("UTC")
-                            .alias(col)
-                        )
+            for col in _DATETIME_COLUMN_HINTS:
+                if col not in df.columns:
+                    continue
+                if df.schema.get(col) == pl.Utf8:
+                    df = df.with_columns(
+                        pl.col(col)
+                        .str.replace("Z$", "+00:00")
+                        .str.strptime(pl.Datetime, strict=False)
+                        .dt.replace_time_zone("UTC")
+                        .alias(col)
+                    )
             return df
 
         raise ValueError(f"Unknown frame_type: {frame!r}")
