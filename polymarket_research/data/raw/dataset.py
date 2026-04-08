@@ -66,6 +66,10 @@ class RawPolymarketDataset:
         """Return a compact, human-readable market view for quick inspection."""
         columns = [
             "market_id",
+            "event_id",
+            "event_slug",
+            "event_title",
+            "event_series_slug",
             "question",
             "primary_domain",
             "active",

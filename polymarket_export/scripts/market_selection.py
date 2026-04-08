@@ -14,11 +14,11 @@ if str(REPO_ROOT) not in sys.path:
 
 from clients.gamma_client import GammaClient
 from configs.resolved_dataset_domain_config import DOMAIN_PRIORITY
-from scripts.download_resolved_probability_dataset import DEFAULT_DB_PATH
-from scripts.download_resolved_probability_dataset import DEFAULT_LOG_DIR
-from scripts.download_resolved_probability_dataset import ensure_schema
-from scripts.download_resolved_probability_dataset import refresh_market_registry_all_categories
-from scripts.download_resolved_probability_dataset import setup_logging
+from polymarket_registry.refresh import select_market_registry_from_universe_all_categories
+from polymarket_registry.schema import ensure_schema
+from scripts.common import DEFAULT_DB_PATH
+from scripts.common import DEFAULT_LOG_DIR
+from scripts.common import setup_logging
 
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Prepare resolved-market metadata registry for all configured research categories."
+        description="Build the filtered market registry from the local market_universe table."
     )
     p.add_argument(
         "--db-path",
@@ -36,19 +36,13 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     p.add_argument(
         "--min-created-at",
         default="2025-01-01T00:00:00Z",
-        help="Lower bound for market createdAt when rebuilding the market registry.",
+        help="Lower bound for local market_universe createdAt when rebuilding the filtered registry.",
     )
     p.add_argument(
         "--min-resolved-volume",
         type=float,
         default=100_000.0,
-        help="Minimum cumulative market volume for resolved candidates.",
-    )
-    p.add_argument(
-        "--max-metadata-pages",
-        type=int,
-        default=10,
-        help="Maximum metadata pages to scan during registry preparation.",
+        help="Minimum cumulative market volume for high-volume candidate filtering.",
     )
     p.add_argument(
         "--categories",
@@ -75,7 +69,7 @@ def main(argv: Sequence[str]) -> int:
     args = parse_args(argv)
     timestamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     log_dir = Path(args.log_dir).expanduser().resolve()
-    log_path = log_dir / f"prepare_meta_{timestamp}.log"
+    log_path = log_dir / f"market_selection_{timestamp}.log"
     setup_logging(args.log_level, log_path=log_path)
 
     db_path = Path(args.db_path).expanduser().resolve()
@@ -85,16 +79,15 @@ def main(argv: Sequence[str]) -> int:
     gamma = GammaClient()
     with sqlite3.connect(db_path) as conn:
         ensure_schema(conn)
-        selected_df = refresh_market_registry_all_categories(
+        selected_df = select_market_registry_from_universe_all_categories(
             conn,
             gamma=gamma,
             min_created_at=args.min_created_at,
             min_resolved_volume=args.min_resolved_volume,
-            max_metadata_pages=args.max_metadata_pages,
             categories=args.categories,
         )
         logger.info(
-            "meta preparation finished | total_selected=%s db=%s",
+            "market selection finished | total_selected=%s db=%s",
             len(selected_df),
             db_path,
         )

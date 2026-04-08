@@ -102,39 +102,45 @@ def _load_eligible_markets(
     max_markets: int,
     min_probability_rows: int,
 ) -> pd.DataFrame:
-    """Load one domain-specific market table from SQLite using simple eligibility rules."""
+    """Load one domain-specific market table from SQLite using downloaded histories plus broad universe metadata."""
 
     query = """
     SELECT
-        m.market_id,
-        m.market_slug,
-        m.question,
-        m.description,
-        m.resolution_source,
-        m.active,
-        m.closed,
-        m.archived,
-        m.created_at,
-        m.end_date,
-        m.volume_num,
-        m.final_outcome,
+        a.market_id,
+        COALESCE(u.market_slug, m.market_slug, a.market_slug) AS market_slug,
+        COALESCE(u.event_id, m.event_id) AS event_id,
+        COALESCE(u.event_slug, m.event_slug) AS event_slug,
+        COALESCE(u.event_title, m.event_title) AS event_title,
+        COALESCE(u.event_series_slug, m.event_series_slug) AS event_series_slug,
+        COALESCE(u.question, m.question) AS question,
+        COALESCE(u.description, m.description) AS description,
+        COALESCE(u.resolution_source, m.resolution_source) AS resolution_source,
+        COALESCE(u.active, m.active, 0) AS active,
+        COALESCE(u.closed, m.closed, 0) AS closed,
+        COALESCE(u.archived, m.archived, 0) AS archived,
+        COALESCE(u.created_at, m.created_at) AS created_at,
+        COALESCE(u.end_date, m.end_date) AS end_date,
+        COALESCE(u.volume_num, m.volume_num) AS volume_num,
+        COALESCE(u.final_outcome, m.final_outcome) AS final_outcome,
         m.final_yes_probability,
         m.tag_labels,
-        m.primary_domain,
-        m.synced_at_utc,
+        COALESCE(a.primary_domain, m.primary_domain) AS primary_domain,
+        COALESCE(u.synced_at_utc, m.synced_at_utc) AS synced_at_utc,
         a.trade_rows,
         a.probability_rows,
         a.probability_start_utc,
         a.probability_end_utc
-    FROM markets AS m
-    INNER JOIN added_markets AS a
+    FROM added_markets AS a
+    LEFT JOIN market_universe AS u
+        ON u.market_id = a.market_id
+    LEFT JOIN markets AS m
         ON a.market_id = m.market_id
-    WHERE m.primary_domain = ?
+    WHERE a.primary_domain = ?
       AND a.primary_domain = ?
       AND a.probability_rows >= ?
-      AND m.end_date IS NOT NULL
-      AND m.created_at IS NOT NULL
-    ORDER BY COALESCE(m.volume_num, 0.0) DESC, m.created_at DESC
+      AND COALESCE(u.end_date, m.end_date) IS NOT NULL
+      AND COALESCE(u.created_at, m.created_at) IS NOT NULL
+    ORDER BY COALESCE(u.volume_num, m.volume_num, 0.0) DESC, COALESCE(u.created_at, m.created_at) DESC
     LIMIT ?
     """
     frame = pd.read_sql_query(
@@ -199,6 +205,9 @@ def _normalize_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
     for column in ("created_at", "end_date", "probability_start_utc", "probability_end_utc", "synced_at_utc"):
         if column in out.columns:
             out[column] = pd.to_datetime(out[column], utc=True, errors="coerce")
+    for column in ("market_id", "event_id"):
+        if column in out.columns:
+            out[column] = out[column].astype("string")
     numeric_columns = (
         "volume_num",
         "final_yes_probability",

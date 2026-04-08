@@ -13,13 +13,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from configs.resolved_dataset_domain_config import DOMAIN_PRIORITY
-from scripts.download_resolved_probability_dataset import DEFAULT_DB_PATH
-from scripts.download_resolved_probability_dataset import DEFAULT_LOG_DIR
-from scripts.download_resolved_probability_dataset import build_pending_queue
-from scripts.download_resolved_probability_dataset import ensure_schema
-from scripts.download_resolved_probability_dataset import load_markets_for_category
-from scripts.download_resolved_probability_dataset import setup_logging
 from clients.gamma_client import GammaClient
+from polymarket_registry.history import build_pending_queue
+from polymarket_registry.history import build_yes_probability_series_5m
+from polymarket_registry.history import store_market_dataset
+from polymarket_registry.schema import ensure_schema
+from polymarket_registry.upsert import load_markets_for_category
+from scripts.common import DEFAULT_DB_PATH
+from scripts.common import DEFAULT_LOG_DIR
+from scripts.common import setup_logging
 
 
 logger = logging.getLogger(__name__)
@@ -88,7 +90,7 @@ def main(argv: Sequence[str]) -> int:
         )
         if available_df.empty:
             logger.warning(
-                "no markets available for category=%s; run prepare_meta.py first",
+                "no markets available for category=%s; run market_selection.py first",
                 args.category,
             )
             return 0
@@ -114,8 +116,6 @@ def main(argv: Sequence[str]) -> int:
         failed = 0
         queue_total = len(queue_df)
         from collectors.trades_collector import TradesCollector
-        from scripts.download_resolved_probability_dataset import build_yes_probability_series_5m
-        from scripts.download_resolved_probability_dataset import store_market_dataset
 
         trades_collector = TradesCollector(gamma)
         for idx, (_, market_row) in enumerate(queue_df.iterrows(), start=1):

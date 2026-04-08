@@ -247,7 +247,8 @@ class GammaClient:
         """
         Estimate start offset for markets with `createdAt >= created_at_gte`.
 
-        Assumes `/markets` ordering is ascending by `createdAt` (observed behavior).
+        Assumes the requested `/markets` slice is monotonic in `createdAt`.
+        Current Gamma behavior appears ascending for the slices used here.
         Uses binary search on `limit=1` probes for speed.
 
         Returns:

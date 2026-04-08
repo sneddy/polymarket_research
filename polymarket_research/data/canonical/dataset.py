@@ -105,6 +105,8 @@ class CanonicalDatasetBuilder:
 
         out = markets.copy()
         out["market_id"] = out["market_id"].astype(str)
+        if "event_id" in out.columns:
+            out["event_id"] = out["event_id"].astype("string")
         for column in ("created_at", "end_date", "probability_start_utc", "probability_end_utc"):
             if column in out.columns:
                 out[column] = pd.to_datetime(out[column], utc=True, errors="coerce")

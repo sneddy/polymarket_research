@@ -35,13 +35,32 @@ No local `db/`, `cached_data/`, or `logs/` directories are kept inside `polymark
 
 ## Common Entry Points
 
-Prepare the resolved market registry:
+Download and refresh the broad market universe metadata:
 
 ```bash
-python -m scripts.prepare_meta \
+python -m scripts.download_market_meta \
+  --db-path ../db/resolved_probability_dataset.sqlite \
+  --max-metadata-pages 10000 \
+  --log-dir ../logs
+```
+
+By default this refreshes only `closed=true` markets into `market_universe`. Add `--include-active` if you want the full active + closed universe. It does not rewrite the `probabilities` table. The metadata refresh also stores event-level fields when available:
+- `event_id`
+- `event_slug`
+- `event_title`
+- `event_series_slug`
+
+This script is now intentionally universe-only: it does not build resolved candidates or rewrite the filtered `markets` registry used by history downloads.
+
+Build the filtered market registry used by history downloads:
+
+```bash
+python -m scripts.market_selection \
   --db-path ../db/resolved_probability_dataset.sqlite \
   --log-dir ../logs
 ```
+
+This step reads the already saved `market_universe` table from SQLite, applies the current local candidate filter plus tag enrichment, and replaces the filtered `markets` table used by `get_history`. It does not re-download market metadata pages.
 
 Download 5-minute probability histories for one domain:
 
@@ -52,14 +71,7 @@ python -m scripts.get_history \
   --log-dir ../logs
 ```
 
-Run the end-to-end resolved probability export:
-
-```bash
-python -m scripts.download_resolved_probability_dataset \
-  --category geopolitics \
-  --db-path ../db/resolved_probability_dataset.sqlite \
-  --log-dir ../logs
-```
+`scripts.get_history` is incremental: it only downloads histories for market ids that are present in `markets` but not yet present in `added_markets`.
 
 Download external covariates:
 
@@ -104,5 +116,9 @@ python -m scripts.poll_orderbooks \
 
 ## Notes
 
+- `scripts.inspect_market_meta` is a raw inspector/export utility for market-universe metadata and ranking stats; it does not touch SQLite.
+- `scripts.download_market_meta` only updates `market_universe`; it is no longer responsible for research filtering.
+- `scripts.market_selection` is the explicit bridge from `market_universe` to the filtered `markets` registry used by history downloads.
 - This export root is intentionally kept close to the old layout to minimize churn.
 - The research package under `polymarket_research/` should consume exported local artifacts rather than own ingestion logic.
+- In practice, `download_market_meta` should usually be run with a large `--max-metadata-pages` value. Small values like `10` only scan a shallow prefix of the market universe.

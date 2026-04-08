@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import sys
 from typing import Any
 
 from clients.gamma_client import GammaClient
@@ -13,8 +12,8 @@ from collectors.markets_collector import MarketsCollector
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Download Polymarket-wide market metadata and ranking stats.")
     p.add_argument("--active-only", action="store_true", help="Only include active markets.")
-    p.add_argument("--limit", type=int, default=200, help="Gamma page size.")
-    p.add_argument("--max-pages", type=int, default=None, help="Optional max pages per active state.")
+    p.add_argument("--limit", type=int, default=200, help="Gamma page size per slice.")
+    p.add_argument("--max-pages", type=int, default=None, help="Optional max pages per requested slice.")
     p.add_argument("--top", type=int, default=25, help="Number of top markets to return.")
     p.add_argument("--min-liquidity", type=float, default=None, help="Optional min liquidity filter for ranking.")
     p.add_argument("--min-volume-24h", type=float, default=None, help="Optional min 24h volume filter for ranking.")
@@ -59,7 +58,7 @@ def main(argv: list[str]) -> int:
     collector = MarketsCollector(client)
     report = collector.download_market_meta(
         include_active=True,
-        include_inactive=not args.active_only,
+        include_closed=not args.active_only,
         limit=args.limit,
         max_pages=args.max_pages,
         top_n=args.top,

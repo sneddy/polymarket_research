@@ -8,9 +8,7 @@ from polymarket_research.data.config import (
     MarketSelectionConfig,
     PanelBuildConfig,
 )
-from polymarket_research.data.pipeline import PolymarketDatasetBuilder
 from polymarket_research.data.raw.dataset import RawExternalCovariates, RawPolymarketDataset
-from polymarket_research.data.repository import ResolvedMarketRepository
 
 __all__ = [
     "CanonicalDataset",
@@ -20,8 +18,6 @@ __all__ = [
     "ExternalShockConfig",
     "MarketSelectionConfig",
     "PanelBuildConfig",
-    "PolymarketDatasetBuilder",
     "RawExternalCovariates",
     "RawPolymarketDataset",
-    "ResolvedMarketRepository",
 ]

@@ -94,6 +94,34 @@ class MarketsCollector:
         self._client = client
         self._store = store or ParquetStore()
 
+    @staticmethod
+    def _market_state_request(active: bool, params: dict[str, Any]) -> tuple[bool, dict[str, Any], str]:
+        """
+        Map the collector's active/closed toggle to the Gamma query that returns distinct slices.
+
+        Gamma's `active=false` currently overlaps `active=true` and misses the historical market
+        universe. For the closed branch we therefore query `closed=true`.
+        """
+
+        query_params = dict(params)
+        if active:
+            return True, query_params, "active"
+        query_params["closed"] = "true"
+        return True, query_params, "closed"
+
+    @staticmethod
+    def _resolve_include_closed(
+        include_closed: bool | None,
+        include_inactive: bool | None,
+    ) -> bool:
+        if include_closed is None:
+            if include_inactive is None:
+                return True
+            return bool(include_inactive)
+        if include_inactive is not None and bool(include_inactive) != bool(include_closed):
+            raise ValueError("include_closed and include_inactive disagree")
+        return bool(include_closed)
+
     def download_markets(
         self,
         *,
@@ -109,7 +137,7 @@ class MarketsCollector:
     ) -> Any:
         min_created_dt = ensure_datetime_utc(min_created_at) if min_created_at is not None else None
         base_params = dict(params)
-        query_params = dict(base_params)
+        request_active, query_params, state_label = self._market_state_request(active, base_params)
         count_cache: dict[bool, int | None] = {}
 
         tqdm = _resolve_tqdm(show_progress=show_progress)
@@ -118,7 +146,8 @@ class MarketsCollector:
 
         def _estimate_count_cached(state_active: bool) -> int | None:
             if state_active not in count_cache:
-                count_cache[state_active] = self._client.estimate_markets_count(active=state_active, **base_params)
+                req_active, req_params, _ = self._market_state_request(state_active, base_params)
+                count_cache[state_active] = self._client.estimate_markets_count(active=req_active, **req_params)
             return count_cache[state_active]
 
         start_offset = 0
@@ -129,16 +158,16 @@ class MarketsCollector:
             if total_full is not None:
                 seek = self._client.estimate_markets_start_offset_by_created_at(
                     created_at_gte=min_created_dt,
-                    active=active,
+                    active=request_active,
                     total_count_hint=total_full,
-                    **base_params,
+                    **query_params,
                 )
                 if seek is not None:
                     start_offset = int(seek)
                 estimated_remaining = max(0, int(total_full) - int(start_offset))
                 logger.info(
-                    "Market download start offset estimated | active=%s min_created_at=%s total=%s start_offset=%s remaining=%s",
-                    active,
+                    "Market download start offset estimated | state=%s min_created_at=%s total=%s start_offset=%s remaining=%s",
+                    state_label,
                     min_created_dt.isoformat(),
                     total_full,
                     start_offset,
@@ -146,8 +175,8 @@ class MarketsCollector:
                 )
             else:
                 logger.info(
-                    "Market download start offset estimation unavailable | active=%s min_created_at=%s",
-                    active,
+                    "Market download start offset estimation unavailable | state=%s min_created_at=%s",
+                    state_label,
                     min_created_dt.isoformat(),
                 )
 
@@ -178,7 +207,7 @@ class MarketsCollector:
                 total=total,
                 disable=False,
                 unit="market",
-                desc=f"Downloading markets ({'active' if active else 'inactive'})",
+                desc=f"Downloading markets ({state_label})",
                 leave=True,
             )
             if tqdm is not None
@@ -192,7 +221,7 @@ class MarketsCollector:
         stopped_early = False
         try:
             for item in self._client.iter_markets(
-                active=active,
+                active=request_active,
                 limit=limit,
                 start_offset=start_offset,
                 max_pages=effective_max_pages,
@@ -222,14 +251,14 @@ class MarketsCollector:
                 if pbar is not None:
                     pbar.update(1)
                     if len(rows) % progress_every == 0:
-                        postfix = {"fetched": len(rows), "state": "active" if active else "inactive"}
+                        postfix = {"fetched": len(rows), "state": state_label}
                         if created_at is not None:
                             postfix["created_at"] = created_at.strftime("%Y-%m-%d")
                         if inferred_descending is not None:
                             postfix["order"] = "desc" if inferred_descending else "asc"
                         pbar.set_postfix(postfix)
             if pbar is not None:
-                postfix = {"fetched": len(rows), "state": "active" if active else "inactive"}
+                postfix = {"fetched": len(rows), "state": state_label}
                 if stopped_early:
                     postfix["cutoff_stop"] = True
                 if prev_created_at is not None:
@@ -248,7 +277,8 @@ class MarketsCollector:
         self,
         *,
         include_active: bool = True,
-        include_inactive: bool = True,
+        include_closed: bool | None = None,
+        include_inactive: bool | None = None,
         limit: int = 100,
         max_pages: int | None = None,
         frame_type: FrameType | None = None,
@@ -262,20 +292,21 @@ class MarketsCollector:
         """
         Download a broad market universe from Gamma.
 
-        By default this pulls both active and inactive markets and deduplicates them by condition id / id / slug.
+        By default this pulls both active and closed markets and deduplicates them by condition id / id / slug.
+        `include_inactive` is kept as a backwards-compatible alias for `include_closed`.
         """
 
+        include_closed = self._resolve_include_closed(include_closed, include_inactive)
         states: list[bool] = []
+        if include_closed:
+            states.append(False)
         if include_active:
             states.append(True)
-        if include_inactive:
-            states.append(False)
         if not states:
-            raise ValueError("At least one of include_active/include_inactive must be True.")
+            raise ValueError("At least one of include_active/include_closed must be True.")
 
         min_created_dt = ensure_datetime_utc(min_created_at) if min_created_at is not None else None
         plain_params = dict(params)
-        base_params = dict(plain_params)
         count_cache: dict[bool, int | None] = {}
 
         tqdm = _resolve_tqdm(show_progress=show_progress)
@@ -284,7 +315,8 @@ class MarketsCollector:
 
         def _estimate_count_cached(state_active: bool) -> int | None:
             if state_active not in count_cache:
-                count_cache[state_active] = self._client.estimate_markets_count(active=state_active, **plain_params)
+                req_active, req_params, _ = self._market_state_request(state_active, plain_params)
+                count_cache[state_active] = self._client.estimate_markets_count(active=req_active, **req_params)
             return count_cache[state_active]
 
         total = None
@@ -292,26 +324,27 @@ class MarketsCollector:
         estimated_remaining: dict[bool, int | None] = {active: None for active in states}
         if min_created_dt is not None:
             for active in states:
+                request_active, state_params, state_label = self._market_state_request(active, plain_params)
                 full_est = _estimate_count_cached(active)
                 if full_est is None:
                     logger.info(
-                        "Market universe start offset estimation unavailable | active=%s min_created_at=%s",
-                        active,
+                        "Market universe start offset estimation unavailable | state=%s min_created_at=%s",
+                        state_label,
                         min_created_dt.isoformat(),
                     )
                     continue
                 seek = self._client.estimate_markets_start_offset_by_created_at(
                     created_at_gte=min_created_dt,
-                    active=active,
+                    active=request_active,
                     total_count_hint=full_est,
-                    **plain_params,
+                    **state_params,
                 )
                 if seek is not None:
                     start_offsets[active] = int(seek)
                 estimated_remaining[active] = max(0, int(full_est) - int(start_offsets[active]))
                 logger.info(
-                    "Market universe start offset estimated | active=%s min_created_at=%s total=%s start_offset=%s remaining=%s",
-                    active,
+                    "Market universe start offset estimated | state=%s min_created_at=%s total=%s start_offset=%s remaining=%s",
+                    state_label,
                     min_created_dt.isoformat(),
                     full_est,
                     start_offsets[active],
@@ -353,11 +386,19 @@ class MarketsCollector:
         rows: list[dict[str, Any]] = []
         errors: list[str] = []
         progress_every = max(25, int(limit))
+
+        def _progress_market_ref(item: dict[str, Any]) -> tuple[str | None, str | None]:
+            market_id = item.get("id")
+            slug = item.get("slug")
+            market_id_text = str(market_id).strip() if market_id is not None else None
+            slug_text = str(slug).strip() if slug is not None else None
+            if slug_text and len(slug_text) > 36:
+                slug_text = slug_text[:33] + "..."
+            return (market_id_text or None, slug_text or None)
+
         try:
             for active in states:
-                state_label = "active" if active else "inactive"
-                if pbar is not None:
-                    pbar.set_postfix({"state": state_label, "fetched": len(rows)})
+                request_active, state_params, state_label = self._market_state_request(active, plain_params)
                 effective_max_pages = max_pages
                 remain = estimated_remaining.get(active)
                 if remain is not None and int(limit) > 0:
@@ -368,17 +409,31 @@ class MarketsCollector:
                         effective_max_pages = pages_needed
                     else:
                         effective_max_pages = min(int(effective_max_pages), pages_needed)
+                logger.info(
+                    "market universe state started | state=%s start_offset=%s max_pages=%s min_created_at=%s",
+                    state_label,
+                    start_offsets.get(active, 0),
+                    effective_max_pages,
+                    min_created_dt.isoformat() if min_created_dt is not None else None,
+                )
+                if pbar is not None:
+                    pbar.set_postfix({"state": state_label, "fetched": len(rows)})
 
                 inferred_descending: bool | None = None
                 prev_created_at: datetime | None = None
+                first_created_at: datetime | None = None
+                first_market_id: str | None = None
+                first_slug: str | None = None
+                last_market_id: str | None = None
+                last_slug: str | None = None
                 state_stopped_early = False
                 try:
                     for item in self._client.iter_markets(
-                        active=active,
+                        active=request_active,
                         limit=limit,
                         start_offset=start_offsets.get(active, 0),
                         max_pages=effective_max_pages,
-                        **base_params,
+                        **state_params,
                     ):
                         if not isinstance(item, dict):
                             continue
@@ -389,6 +444,9 @@ class MarketsCollector:
                             elif created_at > prev_created_at:
                                 inferred_descending = False
                         if created_at is not None:
+                            if first_created_at is None:
+                                first_created_at = created_at
+                                first_market_id, first_slug = _progress_market_ref(item)
                             prev_created_at = created_at
 
                         if min_created_dt is not None:
@@ -400,12 +458,18 @@ class MarketsCollector:
                                     break
                                 continue
                         rows.append(to_snake_case_keys(item) if normalize_keys else item)
+                        last_market_id, last_slug = _progress_market_ref(item)
                         if pbar is not None:
                             pbar.update(1)
                             if len(rows) % progress_every == 0:
+                                market_id_text, slug_text = _progress_market_ref(item)
                                 postfix = {"state": state_label, "fetched": len(rows)}
                                 if created_at is not None:
                                     postfix["created_at"] = created_at.strftime("%Y-%m-%d")
+                                if market_id_text is not None:
+                                    postfix["market_id"] = market_id_text
+                                if slug_text is not None:
+                                    postfix["slug"] = slug_text
                                 if inferred_descending is not None:
                                     postfix["order"] = "desc" if inferred_descending else "asc"
                                 pbar.set_postfix(postfix)
@@ -416,9 +480,28 @@ class MarketsCollector:
                         if inferred_descending is not None:
                             postfix["order"] = "desc" if inferred_descending else "asc"
                         pbar.set_postfix(postfix)
+                    logger.info(
+                        "market universe state finished | state=%s fetched=%s cutoff_stop=%s first_created_at=%s first_market_id=%s first_slug=%s last_created_at=%s last_market_id=%s last_slug=%s order=%s",
+                        state_label,
+                        len(rows),
+                        state_stopped_early,
+                        first_created_at.isoformat() if first_created_at is not None else None,
+                        first_market_id,
+                        first_slug,
+                        prev_created_at.isoformat() if prev_created_at is not None else None,
+                        last_market_id,
+                        last_slug,
+                        (
+                            "desc"
+                            if inferred_descending is True
+                            else "asc"
+                            if inferred_descending is False
+                            else None
+                        ),
+                    )
                 except Exception as e:
-                    errors.append(f"active={active}: {type(e).__name__}: {e}")
-                    logger.warning("Market universe fetch failed for active=%s: %s", active, e)
+                    errors.append(f"state={state_label}: {type(e).__name__}: {e}")
+                    logger.warning("Market universe fetch failed for state=%s: %s", state_label, e)
                     continue
             if pbar is not None:
                 pbar.set_postfix({"state": "done", "fetched": len(rows)})
@@ -452,11 +535,14 @@ class MarketsCollector:
         active = self._coerce_bool_series(pdf, ["active"])
         closed = self._coerce_bool_series(pdf, ["closed"])
         archived = self._coerce_bool_series(pdf, ["archived"])
+        live = active & ~closed
+        inactive = ~live
 
         out.update(
             {
-                "markets_active": int(active.sum()),
-                "markets_inactive": int((~active).sum()),
+                "markets_active": int(live.sum()),
+                # Backwards-compatible alias for markets that are not currently live.
+                "markets_inactive": int(inactive.sum()),
                 "markets_closed": int(closed.sum()),
                 "markets_archived": int(archived.sum()),
                 "markets_open": int((~closed).sum()),
@@ -573,7 +659,8 @@ class MarketsCollector:
         self,
         *,
         include_active: bool = True,
-        include_inactive: bool = True,
+        include_closed: bool | None = None,
+        include_inactive: bool | None = None,
         limit: int = 100,
         max_pages: int | None = None,
         top_n: int = 25,
@@ -602,6 +689,7 @@ class MarketsCollector:
 
         markets = self.download_market_universe(
             include_active=include_active,
+            include_closed=include_closed,
             include_inactive=include_inactive,
             limit=limit,
             max_pages=max_pages,

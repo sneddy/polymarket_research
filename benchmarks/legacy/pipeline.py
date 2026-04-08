@@ -16,7 +16,7 @@ from benchmarks.benchmark_utils import (
 from benchmarks.covariate_utils import asof_join_covariates, load_external_covariates, pivot_covariates_to_wide
 from polymarket_research.data.bundle import DataBundle
 from polymarket_research.data.config import DataPaths, ExternalShockConfig, MarketSelectionConfig, PanelBuildConfig
-from polymarket_research.data.repository import ResolvedMarketRepository
+from benchmarks.legacy.repository import ResolvedMarketRepository
 
 
 def _parse_listish(value: object) -> list[str]:

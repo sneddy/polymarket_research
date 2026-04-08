@@ -55,13 +55,15 @@ pip install -r requirements.txt
 
 ### Main script entrypoints
 
-- `scripts.prepare_meta`
-  Build the resolved-market metadata registry.
+- `scripts.download_market_meta`
+  Refresh the broad market-universe metadata table.
+- `scripts.market_selection`
+  Build the filtered market registry used by history downloads.
 - `scripts.get_history`
   Download full trade history for prepared markets and build 5-minute probability panels.
 - `scripts.download_trades`
   Download historical trades for one market.
-- `scripts.market_meta`
+- `scripts.inspect_market_meta`
   Download and inspect market-universe metadata.
 - `scripts.record_orderbook`
   Record live websocket order-book updates.
@@ -76,21 +78,24 @@ pip install -r requirements.txt
 
 For most research tasks in this repository, the intended pipeline is:
 
-1. prepare the resolved-market registry
-2. download 5-minute Polymarket histories for one or more research domains
-3. optionally download external covariates
-4. run benchmarks / experiments on top of the resulting datasets
+1. download the broad market-universe metadata
+2. build the filtered market registry for history download
+3. download 5-minute Polymarket histories for one or more research domains
+4. optionally download external covariates
+5. run benchmarks / experiments on top of the resulting datasets
 
 ### What gets created
 
-`scripts.prepare_meta` and `scripts.get_history` write to:
+`scripts.download_market_meta`, `scripts.market_selection`, and `scripts.get_history` write to:
 
 - `db/resolved_probability_dataset.sqlite`
 
 Main tables:
 
+- `market_universe`
+  Broad Polymarket metadata universe from the listing endpoint
 - `markets`
-  Resolved-market metadata registry across domains
+  Filtered market registry used by the legacy history pipeline
 - `added_markets`
   Markets whose history has already been downloaded
 - `probabilities`
@@ -116,27 +121,39 @@ The following commands reflect the main end-to-end jobs currently used in this r
 
 | Goal | Run | Main output |
 | --- | --- | --- |
-| Build the resolved-market registry | `python -m scripts.prepare_meta --db-path db/resolved_probability_dataset.sqlite ...` | `markets` table in `db/resolved_probability_dataset.sqlite` |
+| Refresh the broad market universe | `python -m scripts.download_market_meta --db-path db/resolved_probability_dataset.sqlite ...` | `market_universe` table in `db/resolved_probability_dataset.sqlite` |
+| Build the filtered market registry | `python -m scripts.market_selection --db-path db/resolved_probability_dataset.sqlite ...` | `markets` table in `db/resolved_probability_dataset.sqlite` |
 | Download 5-minute Polymarket panels for one domain | `python -m scripts.get_history --category <domain> --db-path db/resolved_probability_dataset.sqlite` | `added_markets` and `probabilities` tables in `db/resolved_probability_dataset.sqlite` |
 | Download full historical trades for one market | `python -m scripts.download_trades --market-id ... --out cached_data/trades.parquet` | `cached_data/trades.parquet` |
-| Inspect/download market-universe metadata | `python -m scripts.market_meta ...` | parquet/JSON exports of market metadata and rankings |
+| Inspect/download market-universe metadata | `python -m scripts.inspect_market_meta ...` | parquet/JSON exports of market metadata and rankings |
 | Record live websocket order-book updates | `python -m scripts.record_orderbook ... --out cached_data/orderbook.parquet` | `cached_data/orderbook.parquet` |
 | Poll REST order-book snapshots into SQLite | `python -m scripts.poll_orderbooks ... --db cached_data/orderbooks.sqlite` | SQLite order-book snapshot database |
 | Download external covariates | `python -m scripts.download_external_covariates ... --out cached_data/external_covariates` | parquet dataset under `cached_data/external_covariates` |
 | Download benchmark-window EDGAR events | `python scripts/get_events.py` | parquet dataset under `cached_data/external_events` |
 | Run benchmark suite | `python benchmarks/run_benchmarks.py --domain <domain>` | `benchmarks/results/<domain>/` |
 
-### 1) Prepare the resolved-market registry
+### 1) Download the broad market-universe metadata
 
 ```bash
 conda activate polymarket
-python -m scripts.prepare_meta \
+python -m scripts.download_market_meta \
   --db-path db/resolved_probability_dataset.sqlite \
   --min-created-at 2025-01-01T00:00:00Z \
-  --min-resolved-volume 100000
+  --max-metadata-pages 10000
 ```
 
-### 2) Download 5-minute Polymarket histories for `geopolitics`
+By default this refreshes only `closed=true` markets. Add `--include-active` to include open markets too.
+
+### 2) Build the filtered market registry from the saved universe
+
+```bash
+conda activate polymarket
+python -m scripts.market_selection \
+  --db-path db/resolved_probability_dataset.sqlite \
+  --min-created-at 2025-01-01T00:00:00Z
+```
+
+### 3) Download 5-minute Polymarket histories for `geopolitics`
 
 ```bash
 conda activate polymarket
@@ -145,7 +162,7 @@ python -m scripts.get_history \
   --db-path db/resolved_probability_dataset.sqlite
 ```
 
-### 3) Download 5-minute Polymarket histories for `finance_economy`
+### 4) Download 5-minute Polymarket histories for `finance_economy`
 
 ```bash
 conda activate polymarket
@@ -154,7 +171,7 @@ python -m scripts.get_history \
   --db-path db/resolved_probability_dataset.sqlite
 ```
 
-### 4) Download external covariates
+### 5) Download external covariates
 
 Crypto (`BTC/ETH`) uses Binance archive backfill by default. Non-crypto default series use FRED daily data. SEC EDGAR filing-count series are available as opt-in daily covariates.
 
@@ -365,7 +382,7 @@ Normalized columns:
 ### CLI
 
 ```bash
-python -m scripts.market_meta \
+python -m scripts.inspect_market_meta \
   --top 50 \
   --out-markets cached_data/markets.parquet \
   --out-top cached_data/top_markets.parquet \
@@ -386,13 +403,13 @@ Useful flags:
 Active only:
 
 ```bash
-python -m scripts.market_meta --active-only --top 25
+python -m scripts.inspect_market_meta --active-only --top 25
 ```
 
 Recent markets only (creation date cutoff):
 
 ```bash
-python -m scripts.market_meta \
+python -m scripts.inspect_market_meta \
   --min-created-at "2025-01-01T00:00:00Z" \
   --top 25
 ```
@@ -405,9 +422,8 @@ from collectors.markets_collector import MarketsCollector
 
 mc = MarketsCollector(GammaClient())
 finished = mc.download_market_meta(
-    include_active=True,
-    include_inactive=False,
-    closed="true",
+    include_active=False,
+    include_closed=True,
     min_created_at="2025-01-01T00:00:00Z",
     top_n=30,
     show_progress=True,
@@ -426,7 +442,7 @@ mc = MarketsCollector(gamma)
 
 report = mc.download_market_meta(
     include_active=True,
-    include_inactive=True,
+    include_closed=True,
     limit=200,
     max_pages=None,
     top_n=25,
@@ -443,8 +459,8 @@ top_markets_df = report["top_markets"]
 ```
 
 Lower-level APIs:
-- `download_markets(active=True/False, ...)`: download one state only.
-- `download_market_universe(include_active=..., include_inactive=..., ...)`: download and optionally dedupe both states.
+- `download_markets(active=True/False, ...)`: download one slice; `active=False` maps to the closed slice.
+- `download_market_universe(include_active=..., include_closed=..., ...)`: download and optionally dedupe both slices.
 - `summarize_markets(df)`: aggregate stats dictionary.
 - `rank_markets(df, top_n=...)`: ranking DataFrame without re-downloading.
 
