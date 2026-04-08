@@ -53,6 +53,28 @@ class NewsConfig:
     gdelt_doc_base_url: str = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 
+@dataclass(frozen=True)
+class BinanceConfig:
+    rest_base_url: str = "https://api.binance.com"
+    max_klines_limit: int = 1000
+
+
+@dataclass(frozen=True)
+class BinanceDataConfig:
+    base_url: str = "https://data.binance.vision/data"
+
+
+@dataclass(frozen=True)
+class FredConfig:
+    graph_csv_url: str = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+
+
+@dataclass(frozen=True)
+class SecEdgarConfig:
+    daily_index_base_url: str = "https://www.sec.gov/Archives/edgar/daily-index"
+    user_agent: str = "polymarket_research/0.1 (contact: research@local.invalid)"
+
+
 def load_http_config_from_env(prefix: str = "POLY_") -> HttpConfig:
     def _get_float(key: str, default: float) -> float:
         val = os.getenv(prefix + key)

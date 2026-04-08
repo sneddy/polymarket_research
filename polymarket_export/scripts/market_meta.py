@@ -82,6 +82,7 @@ def main(argv: list[str]) -> int:
     print(f"Top markets (n={len(top_rows)}):")
     for i, row in enumerate(top_rows[: min(10, len(top_rows))], start=1):
         slug = row.get("slug")
+        category = row.get("category")
         score = row.get("market_score")
         vol24 = row.get("volume_24h")
         liq = row.get("liquidity")
@@ -97,7 +98,8 @@ def main(argv: list[str]) -> int:
             liq_s = f"{float(liq):.2f}"
         except Exception:
             liq_s = "nan"
-        print(f"{i:2d}. score={score_s} volume_24h={vol24_s} liquidity={liq_s} slug={slug}")
+        category_s = str(category) if category is not None else ""
+        print(f"{i:2d}. score={score_s} volume_24h={vol24_s} liquidity={liq_s} category={category_s} slug={slug}")
 
     if args.out_markets:
         collector.save_to_parquet(markets, args.out_markets)

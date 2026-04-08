@@ -116,6 +116,7 @@ class TradesCollector:
         frame_type: FrameType | None = None,
         show_progress: bool = True,
         estimate_total: bool = True,
+        progress_desc: str | None = None,
     ) -> Any:
         """
         Download full historical trades for a market (condition id).
@@ -161,7 +162,7 @@ class TradesCollector:
                 total=total_rows,
                 disable=False,
                 unit="trade",
-                desc="Downloading trades",
+                desc=progress_desc or "Downloading trades",
                 leave=True,
             )
             if tqdm is not None

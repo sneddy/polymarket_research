@@ -7,13 +7,38 @@ __pycache__/
 .venv/
 venv/
 env/
+.python-version
 
-# data outputs
-data/
+# research outputs
 *.parquet
 *.feather
 *.csv
 *.jsonl
+
+# sqlite / local databases
+*.sqlite
+*.sqlite3
+*.db
+
+# shared storage layer at repo root
+/cached_data/
+/data/
+/db/
+/logs/
+/artefacts/
+
+# notebook / experiment outputs
+*.html
+*.png
+*.pdf
+/research_notebooks/running_artefacts/
+/benchmarks/results/
+/polymarket_export/logs/
+
+# packaging
+*.egg-info/
+build/
+dist/
 
 # local secrets
 .env

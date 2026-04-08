@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polymarket-research"
+version = "0.1.0"
+description = "Reusable data abstractions for Polymarket research workflows."
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["polymarket_research*"]

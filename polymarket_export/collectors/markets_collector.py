@@ -136,6 +136,20 @@ class MarketsCollector:
                 if seek is not None:
                     start_offset = int(seek)
                 estimated_remaining = max(0, int(total_full) - int(start_offset))
+                logger.info(
+                    "Market download start offset estimated | active=%s min_created_at=%s total=%s start_offset=%s remaining=%s",
+                    active,
+                    min_created_dt.isoformat(),
+                    total_full,
+                    start_offset,
+                    estimated_remaining,
+                )
+            else:
+                logger.info(
+                    "Market download start offset estimation unavailable | active=%s min_created_at=%s",
+                    active,
+                    min_created_dt.isoformat(),
+                )
 
         total = None
         if show_progress and estimate_total:
@@ -208,11 +222,20 @@ class MarketsCollector:
                 if pbar is not None:
                     pbar.update(1)
                     if len(rows) % progress_every == 0:
-                        pbar.set_postfix({"fetched": len(rows), "state": "active" if active else "inactive"})
+                        postfix = {"fetched": len(rows), "state": "active" if active else "inactive"}
+                        if created_at is not None:
+                            postfix["created_at"] = created_at.strftime("%Y-%m-%d")
+                        if inferred_descending is not None:
+                            postfix["order"] = "desc" if inferred_descending else "asc"
+                        pbar.set_postfix(postfix)
             if pbar is not None:
                 postfix = {"fetched": len(rows), "state": "active" if active else "inactive"}
                 if stopped_early:
                     postfix["cutoff_stop"] = True
+                if prev_created_at is not None:
+                    postfix["created_at"] = prev_created_at.strftime("%Y-%m-%d")
+                if inferred_descending is not None:
+                    postfix["order"] = "desc" if inferred_descending else "asc"
                 pbar.set_postfix(postfix)
         finally:
             if pbar is not None:
@@ -271,6 +294,11 @@ class MarketsCollector:
             for active in states:
                 full_est = _estimate_count_cached(active)
                 if full_est is None:
+                    logger.info(
+                        "Market universe start offset estimation unavailable | active=%s min_created_at=%s",
+                        active,
+                        min_created_dt.isoformat(),
+                    )
                     continue
                 seek = self._client.estimate_markets_start_offset_by_created_at(
                     created_at_gte=min_created_dt,
@@ -281,6 +309,14 @@ class MarketsCollector:
                 if seek is not None:
                     start_offsets[active] = int(seek)
                 estimated_remaining[active] = max(0, int(full_est) - int(start_offsets[active]))
+                logger.info(
+                    "Market universe start offset estimated | active=%s min_created_at=%s total=%s start_offset=%s remaining=%s",
+                    active,
+                    min_created_dt.isoformat(),
+                    full_est,
+                    start_offsets[active],
+                    estimated_remaining[active],
+                )
 
         if show_progress and estimate_total:
             estimates: list[int] = []
@@ -367,9 +403,19 @@ class MarketsCollector:
                         if pbar is not None:
                             pbar.update(1)
                             if len(rows) % progress_every == 0:
-                                pbar.set_postfix({"state": state_label, "fetched": len(rows)})
+                                postfix = {"state": state_label, "fetched": len(rows)}
+                                if created_at is not None:
+                                    postfix["created_at"] = created_at.strftime("%Y-%m-%d")
+                                if inferred_descending is not None:
+                                    postfix["order"] = "desc" if inferred_descending else "asc"
+                                pbar.set_postfix(postfix)
                     if state_stopped_early and pbar is not None:
-                        pbar.set_postfix({"state": state_label, "fetched": len(rows), "cutoff_stop": True})
+                        postfix = {"state": state_label, "fetched": len(rows), "cutoff_stop": True}
+                        if prev_created_at is not None:
+                            postfix["created_at"] = prev_created_at.strftime("%Y-%m-%d")
+                        if inferred_descending is not None:
+                            postfix["order"] = "desc" if inferred_descending else "asc"
+                        pbar.set_postfix(postfix)
                 except Exception as e:
                     errors.append(f"active={active}: {type(e).__name__}: {e}")
                     logger.warning("Market universe fetch failed for active=%s: %s", active, e)
@@ -462,6 +508,7 @@ class MarketsCollector:
         work["condition_id"] = self._coalesce_text_series(pdf, ["condition_id", "conditionId"])
         work["slug"] = self._coalesce_text_series(pdf, ["slug"])
         work["question"] = self._coalesce_text_series(pdf, ["question"])
+        work["category"] = self._coalesce_text_series(pdf, ["category"])
         work["active"] = self._coerce_bool_series(pdf, ["active"])
         work["closed"] = self._coerce_bool_series(pdf, ["closed"])
         work["created_at"] = self._coalesce_datetime_series(pdf, ["created_at", "createdAt"])
@@ -508,6 +555,7 @@ class MarketsCollector:
             "condition_id",
             "slug",
             "question",
+            "category",
             "active",
             "closed",
             "liquidity",

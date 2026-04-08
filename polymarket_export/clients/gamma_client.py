@@ -77,6 +77,10 @@ class GammaClient:
         url = urljoin(self.gamma_base_url, f"markets/slug/{quote(slug)}")
         return self._get_json(url, params={})
 
+    def get_market_tags(self, market_id: str | int) -> Any:
+        url = urljoin(self.gamma_base_url, f"markets/{quote(str(market_id))}/tags")
+        return self._get_json(url, params={})
+
     def get_event_by_slug(self, slug: str) -> Any:
         url = urljoin(self.gamma_base_url, f"events/slug/{quote(slug)}")
         return self._get_json(url, params={})
@@ -321,10 +325,21 @@ class GammaClient:
     ) -> Iterable[dict[str, Any]]:
         offset = int(start_offset)
         pages = 0
+        prev_page_signature: tuple[int, str | None, str | None] | None = None
         while True:
             payload = fetch(limit=limit, offset=offset)
             items = self._extract_list(payload)
             if not items:
+                return
+
+            page_signature = self._page_signature(items)
+            if prev_page_signature is not None and page_signature == prev_page_signature:
+                logger.warning(
+                    "Stopping offset pagination after repeated page signature at offset=%s limit=%s signature=%s",
+                    offset,
+                    limit,
+                    page_signature,
+                )
                 return
 
             for item in items:
@@ -336,7 +351,36 @@ class GammaClient:
             pages += 1
             if max_pages is not None and pages >= max_pages:
                 return
+            if len(items) < int(limit):
+                return
+            prev_page_signature = page_signature
             offset += len(items)
+
+    @staticmethod
+    def _page_signature(items: list[Any]) -> tuple[int, str | None, str | None]:
+        def _item_sig(item: Any) -> str | None:
+            if not isinstance(item, dict):
+                return None
+            for key in (
+                "id",
+                "conditionId",
+                "condition_id",
+                "slug",
+                "transactionHash",
+                "transaction_hash",
+                "hash",
+                "timestamp",
+                "createdAt",
+                "created_at",
+            ):
+                value = item.get(key)
+                if value is not None:
+                    return f"{key}={value}"
+            return None
+
+        first_sig = _item_sig(items[0]) if items else None
+        last_sig = _item_sig(items[-1]) if items else None
+        return (len(items), first_sig, last_sig)
 
     @staticmethod
     def _extract_list(payload: Any) -> list[Any]:
