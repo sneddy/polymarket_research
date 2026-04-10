@@ -20,19 +20,24 @@ The codebase is organized around one principle:
 
 ## Quick Start
 
-If you already use the project conda environment:
-
-```bash
-conda activate polymarket
-```
-
-Otherwise:
+Install the Python dependencies and both editable packages from the repository root:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install -e .
+pip install -e ./polymarket_export
 ```
+
+What each editable install does:
+
+- `pip install -e .`
+  Installs the `polymarket_research` package used by the research abstractions, benchmarks, and downstream notebooks.
+- `pip install -e ./polymarket_export`
+  Installs the export-side modules such as `clients`, `configs`, `collectors`, `storage`, and `polymarket_registry`.
+
+If you only plan to run export scripts under `polymarket_export/`, the second command is the important one. For normal work in this repository, install both.
 
 ## Repository Map
 

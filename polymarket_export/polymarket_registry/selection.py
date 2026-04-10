@@ -13,17 +13,12 @@ from clients.gamma_client import GammaClient
 from configs.resolved_dataset_domain_config import DOMAIN_KEYWORD_HINTS
 from configs.resolved_dataset_domain_config import DOMAIN_PRIORITY
 from configs.resolved_dataset_domain_config import DOMAIN_TAG_MAP
+from polymarket_registry.block_filters import apply_default_block_filters
+from polymarket_registry.filters import is_short_horizon_updown_series
 from polymarket_registry.upsert import extract_primary_event_fields
 
 
 logger = logging.getLogger(__name__)
-
-
-SHORT_HORIZON_UPDOWN_PATTERNS = (
-    "-updown-5m-",
-    "-updown-15m-",
-    "-updown-4h-",
-)
 
 
 def to_bool(series: pd.Series) -> pd.Series:
@@ -85,20 +80,6 @@ def resolved_outcome_from_prices(
     if winner_prob < 0.99:
         return None, None
     return outcomes[winner_idx], winner_prob
-
-
-def is_short_horizon_updown_series(
-    *,
-    slug: Any,
-    event_slug: Any,
-) -> bool:
-    """Detect recurring short-horizon up/down markets by slug pattern."""
-    slug_text = str(slug or "").lower()
-    event_slug_text = str(event_slug or "").lower()
-    return any(
-        pattern in slug_text or pattern in event_slug_text
-        for pattern in SHORT_HORIZON_UPDOWN_PATTERNS
-    )
 
 
 def filter_low_volume(markets_df: pd.DataFrame, *, min_resolved_volume: float) -> pd.DataFrame:
@@ -191,32 +172,49 @@ def filter_market_universe(
     markets_df: pd.DataFrame,
     *,
     min_resolved_volume: float,
+    apply_exclusion_blocks: bool = True,
 ) -> pd.DataFrame:
     """Filter a locally stored market_universe table into selection candidates."""
     work = markets_df.copy()
     work["id"] = work.get("market_id")
     work["slug"] = work.get("market_slug")
-    work["active_bool"] = to_bool(work["active"]) if "active" in work.columns else False
     work["closed_bool"] = to_bool(work["closed"]) if "closed" in work.columns else False
+    work["active_bool"] = False
     work["volume_num_norm"] = pd.to_numeric(work.get("volume_num"), errors="coerce").fillna(0.0)
     work["liquidity_num_norm"] = pd.to_numeric(work.get("liquidity_num"), errors="coerce")
     work["created_at"] = pd.to_datetime(work.get("created_at"), utc=True, errors="coerce")
     work["end_date"] = pd.to_datetime(work.get("end_date"), utc=True, errors="coerce")
-    work["final_outcome"] = work.get("final_outcome").map(
-        lambda value: value if str(value).strip() in {"Yes", "No"} else None
-    )
-    work["final_yes_probability"] = work["final_outcome"].map(
-        lambda value: 1.0 if value == "Yes" else (0.0 if value == "No" else None)
-    )
+    work["parsed_prices"] = work.get("outcome_prices").map(parse_binary_prices)
+    work["parsed_outcomes"] = work.get("outcomes").map(parse_binary_outcomes)
+
+    final_outcomes: list[str | None] = []
+    final_yes_probabilities: list[float | None] = []
+    for prices, outcomes in zip(work["parsed_prices"], work["parsed_outcomes"], strict=False):
+        if prices is None or outcomes is None:
+            final_outcomes.append(None)
+            final_yes_probabilities.append(None)
+            continue
+        winner, _ = resolved_outcome_from_prices(prices, outcomes)
+        final_outcomes.append(winner)
+        final_yes_probabilities.append(float(prices[outcomes.index("Yes")]) if winner is not None else None)
+
+    work["final_outcome"] = final_outcomes
+    work["final_yes_probability"] = final_yes_probabilities
     work["excluded_short_horizon_updown"] = [
         is_short_horizon_updown_series(slug=slug, event_slug=event_slug)
         for slug, event_slug in zip(work.get("slug"), work.get("event_slug"), strict=False)
     ]
+    if apply_exclusion_blocks:
+        work = apply_default_block_filters(work, min_volume=float(min_resolved_volume))
+        keep_semantic_mask = work["category"].isna()
+    else:
+        keep_semantic_mask = pd.Series(True, index=work.index)
 
     mask = (
         work["final_outcome"].notna()
         & (work["volume_num_norm"] >= float(min_resolved_volume))
         & ~work["excluded_short_horizon_updown"]
+        & keep_semantic_mask
     )
 
     cols = [
@@ -227,6 +225,13 @@ def filter_market_universe(
         "event_slug",
         "event_title",
         "event_series_slug",
+        "event_description",
+        "event_start_time",
+        "event_score",
+        "event_period",
+        "event_series_id",
+        "event_recurrence",
+        "event_series_type",
         "question",
         "description",
         "resolution_source",
@@ -237,6 +242,14 @@ def filter_market_universe(
         "archived",
         "volume_num_norm",
         "liquidity_num_norm",
+        "closed_time",
+        "uma_resolution_status",
+        "neg_risk",
+        "neg_risk_market_id",
+        "group_item_title",
+        "clob_token_ids",
+        "outcomes",
+        "outcome_prices",
         "final_outcome",
         "final_yes_probability",
     ]

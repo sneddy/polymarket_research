@@ -22,6 +22,30 @@ from polymarket_registry.upsert import upsert_market_universe
 
 
 logger = logging.getLogger(__name__)
+_MARKET_UNIVERSE_COLUMNS_LOGGED = False
+_UNTAGGED_PRIMARY_DOMAIN = "unassigned"
+
+
+def _to_log_sample_value(value: object) -> object:
+    """Normalize one DataFrame cell into a compact JSON-safe log value."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+
+    if isinstance(value, (list, dict)):
+        try:
+            return json.loads(json.dumps(value, ensure_ascii=True, default=str))
+        except Exception:
+            return str(value)
+
+    return value
 
 
 def log_market_universe_window(markets_df: pd.DataFrame) -> None:
@@ -52,19 +76,56 @@ def log_market_universe_window(markets_df: pd.DataFrame) -> None:
     )
 
 
+def log_market_universe_columns_once(markets_df: pd.DataFrame) -> None:
+    """Log fetched market-universe columns once per process for schema inspection."""
+    global _MARKET_UNIVERSE_COLUMNS_LOGGED
+    if _MARKET_UNIVERSE_COLUMNS_LOGGED:
+        return
+
+    columns = [str(column) for column in markets_df.columns]
+    logger.info(
+        "registry universe columns | count=%s columns=%s",
+        len(columns),
+        json.dumps(sorted(columns), ensure_ascii=True),
+    )
+    if not markets_df.empty:
+        sample_row = {
+            str(column): _to_log_sample_value(value)
+            for column, value in markets_df.iloc[0].to_dict().items()
+        }
+        logger.info(
+            "registry universe sample_row | row=%s",
+            json.dumps(sample_row, ensure_ascii=True, default=str, sort_keys=True),
+        )
+    _MARKET_UNIVERSE_COLUMNS_LOGGED = True
+
+
+def _with_empty_tag_metadata(candidate_df: pd.DataFrame) -> pd.DataFrame:
+    """Attach empty tag metadata to a selected candidate dataframe."""
+    work = candidate_df.copy()
+    rows = len(work)
+    work["tag_labels"] = [[] for _ in range(rows)]
+    work["matched_tags"] = [[] for _ in range(rows)]
+    work["matched_domains"] = [[] for _ in range(rows)]
+    work["primary_domain"] = _UNTAGGED_PRIMARY_DOMAIN
+    return work
+
+
 def refresh_market_universe(
     conn: sqlite3.Connection,
     *,
     gamma: GammaClient,
     min_created_at: str,
     max_metadata_pages: int,
+    page_limit: int = 200,
     include_active: bool = False,
 ) -> pd.DataFrame:
     """Refresh the broad raw market universe without research-specific filtering."""
     logger.info(
-        "market universe refresh started | min_created_at=%s max_metadata_pages=%s",
+        "market universe refresh started | min_created_at=%s max_metadata_pages=%s page_limit=%s",
         min_created_at,
         max_metadata_pages,
+        page_limit,
     )
     logger.info(
         "market universe fetch mode | include_active=%s include_closed=%s note=%s",
@@ -77,11 +138,14 @@ def refresh_market_universe(
         ),
     )
     markets_collector = MarketsCollector(gamma)
+    deleted_rows = conn.execute("SELECT COUNT(*) FROM market_universe").fetchone()[0]
+    conn.execute("DELETE FROM market_universe")
+    logger.info("market universe cleared before refresh | deleted_rows=%s", deleted_rows)
     logger.info("registry stage started | stage=download_market_universe")
     report = markets_collector.download_market_meta(
         include_active=include_active,
         include_closed=True,
-        limit=200,
+        limit=page_limit,
         max_pages=max_metadata_pages,
         min_created_at=min_created_at,
         show_progress=True,
@@ -89,6 +153,7 @@ def refresh_market_universe(
         frame_type="pandas",
     )
     markets_df = report["markets"]
+    log_market_universe_columns_once(markets_df)
     log_market_universe_window(markets_df)
     logger.info("registry stage finished | stage=download_market_universe fetched=%s", len(markets_df))
     logger.info("registry stage started | stage=upsert_market_universe")
@@ -137,6 +202,7 @@ def refresh_market_registry(
         frame_type="pandas",
     )
     markets_df = report["markets"]
+    log_market_universe_columns_once(markets_df)
     log_market_universe_window(markets_df)
     logger.info("registry stage finished | stage=download_market_universe fetched=%s", len(markets_df))
     logger.info("registry stage started | stage=upsert_market_universe")
@@ -182,11 +248,12 @@ def refresh_market_registry(
 def refresh_market_registry_all_categories(
     conn: sqlite3.Connection,
     *,
-    gamma: GammaClient,
+    gamma: GammaClient | None,
     min_created_at: str,
     min_resolved_volume: float,
     max_metadata_pages: int,
     categories: Sequence[str] | None = None,
+    tag_enrichment: bool = False,
 ) -> pd.DataFrame:
     """Refresh the filtered market registry for all requested categories."""
     category_list = list(categories) if categories is not None else list(DOMAIN_PRIORITY)
@@ -215,6 +282,7 @@ def refresh_market_registry_all_categories(
         frame_type="pandas",
     )
     markets_df = report["markets"]
+    log_market_universe_columns_once(markets_df)
     log_market_universe_window(markets_df)
     logger.info("registry stage finished | stage=download_market_universe fetched=%s", len(markets_df))
     logger.info("registry stage started | stage=upsert_market_universe")
@@ -229,28 +297,36 @@ def refresh_market_registry_all_categories(
         universe_upserted,
         len(raw_candidate_df),
     )
-    logger.info("registry stage started | stage=tag_enrichment candidates=%s", len(raw_candidate_df))
-    enriched_df = enrich_candidates_with_tags(raw_candidate_df, gamma)
-    logger.info("registry stage finished | stage=tag_enrichment enriched=%s", len(enriched_df))
-    if enriched_df.empty:
-        logger.warning("registry refresh found no tag-enriched candidates")
-        return enriched_df
-
-    selected_df = enriched_df.loc[enriched_df["primary_domain"].isin(category_list)].reset_index(drop=True)
+    if tag_enrichment:
+        if gamma is None:
+            raise RuntimeError("tag_enrichment=True requires a GammaClient")
+        logger.info("registry stage started | stage=tag_enrichment candidates=%s", len(raw_candidate_df))
+        enriched_df = enrich_candidates_with_tags(raw_candidate_df, gamma)
+        logger.info("registry stage finished | stage=tag_enrichment enriched=%s", len(enriched_df))
+        if enriched_df.empty:
+            logger.warning("registry refresh found no tag-enriched candidates")
+            return enriched_df
+        selected_df = enriched_df.loc[enriched_df["primary_domain"].isin(category_list)].reset_index(drop=True)
+        replace_categories = category_list
+        selected_counts = {
+            category: int((selected_df["primary_domain"] == category).sum())
+            for category in category_list
+        }
+    else:
+        logger.info("registry stage skipped | stage=tag_enrichment enabled=false")
+        selected_df = _with_empty_tag_metadata(raw_candidate_df).reset_index(drop=True)
+        replace_categories = [*DOMAIN_PRIORITY, _UNTAGGED_PRIMARY_DOMAIN]
+        selected_counts = {_UNTAGGED_PRIMARY_DOMAIN: len(selected_df)}
     logger.info(
         "registry stage started | stage=upsert_filtered_markets categories=%s selected=%s",
-        ",".join(category_list),
+        ",".join(replace_categories),
         len(selected_df),
     )
-    upsert_counts = upsert_markets_for_categories(conn, selected_df, categories=category_list)
+    upsert_counts = upsert_markets_for_categories(conn, selected_df, categories=replace_categories)
     logger.info(
         "registry stage finished | stage=upsert_filtered_markets upsert_counts=%s",
         json.dumps(upsert_counts, ensure_ascii=True, sort_keys=True),
     )
-    selected_counts = {
-        category: int((selected_df["primary_domain"] == category).sum())
-        for category in category_list
-    }
     logger.info(
         "registry refresh finished | selected_counts=%s upsert_counts=%s",
         json.dumps(selected_counts, ensure_ascii=True, sort_keys=True),
@@ -275,17 +351,30 @@ def load_market_universe_for_selection(
             u.event_slug,
             u.event_title,
             u.event_series_slug,
+            u.event_description,
+            u.event_start_time,
+            u.event_score,
+            u.event_period,
+            u.event_series_id,
+            u.event_recurrence,
+            u.event_series_type,
             u.question,
             u.description,
             u.resolution_source,
             u.created_at,
             u.end_date,
-            u.active,
             u.closed,
             u.archived,
             u.volume_num,
             u.liquidity_num,
-            u.final_outcome,
+            u.outcomes,
+            u.outcome_prices,
+            u.clob_token_ids,
+            u.closed_time,
+            u.uma_resolution_status,
+            u.neg_risk,
+            u.neg_risk_market_id,
+            u.group_item_title,
             u.synced_at_utc
         FROM market_universe AS u
         WHERE u.created_at IS NOT NULL
@@ -300,67 +389,90 @@ def load_market_universe_for_selection(
 def select_market_registry_from_universe_all_categories(
     conn: sqlite3.Connection,
     *,
-    gamma: GammaClient,
+    gamma: GammaClient | None,
     min_created_at: str,
     min_resolved_volume: float,
     categories: Sequence[str] | None = None,
+    tag_enrichment: bool = False,
 ) -> pd.DataFrame:
     """Build the filtered market registry from the local market_universe table."""
     category_list = list(categories) if categories is not None else list(DOMAIN_PRIORITY)
     logger.info(
-        "registry selection started | source=market_universe categories=%s min_created_at=%s",
+        "registry selection started | source=market_universe categories=%s min_created_at=%s tag_enrichment=%s",
         ",".join(category_list),
         min_created_at,
+        tag_enrichment,
     )
     logger.info("registry stage started | stage=load_market_universe")
     markets_df = load_market_universe_for_selection(conn, min_created_at=min_created_at)
     logger.info("registry stage finished | stage=load_market_universe loaded=%s", len(markets_df))
-    final_outcome_rows = int(markets_df.get("final_outcome").notna().sum()) if not markets_df.empty else 0
+    resolved_probe = (
+        filter_market_universe(
+            markets_df,
+            min_resolved_volume=0.0,
+            apply_exclusion_blocks=False,
+        )
+        if not markets_df.empty
+        else pd.DataFrame()
+    )
+    final_outcome_rows = len(resolved_probe)
     logger.info(
-        "registry selection precondition | source_rows=%s source_final_outcome_rows=%s",
+        "registry selection precondition | source_rows=%s source_resolved_candidate_rows=%s",
         len(markets_df),
         final_outcome_rows,
     )
     if final_outcome_rows <= 0:
         raise RuntimeError(
-            "market_universe has no final_outcome values; aborting market_selection before modifying markets"
+            "market_universe has no resolved Yes/No candidates from outcomes/outcome_prices; aborting market_selection before modifying selected_markets"
         )
     logger.info("registry stage started | stage=build_candidate_pool")
-    raw_candidate_df = filter_market_universe(markets_df, min_resolved_volume=min_resolved_volume)
+    raw_candidate_df = filter_market_universe(
+        markets_df,
+        min_resolved_volume=min_resolved_volume,
+        apply_exclusion_blocks=True,
+    )
     logger.info("registry stage finished | stage=build_candidate_pool candidates=%s", len(raw_candidate_df))
     logger.info(
         "registry selection ready | source_rows=%s resolved_candidates=%s",
         len(markets_df),
         len(raw_candidate_df),
     )
-    logger.info("registry stage started | stage=tag_enrichment candidates=%s", len(raw_candidate_df))
-    enriched_df = enrich_candidates_with_tags(raw_candidate_df, gamma)
-    logger.info("registry stage finished | stage=tag_enrichment enriched=%s", len(enriched_df))
-    if enriched_df.empty:
-        logger.warning("registry selection found no tag-enriched candidates")
-        if category_list:
-            placeholders = ",".join("?" for _ in category_list)
-            conn.execute(
-                f"DELETE FROM markets WHERE primary_domain IN ({placeholders})",
-                tuple(category_list),
-            )
-        return enriched_df
-
-    selected_df = enriched_df.loc[enriched_df["primary_domain"].isin(category_list)].reset_index(drop=True)
+    if tag_enrichment:
+        if gamma is None:
+            raise RuntimeError("tag_enrichment=True requires a GammaClient")
+        logger.info("registry stage started | stage=tag_enrichment candidates=%s", len(raw_candidate_df))
+        enriched_df = enrich_candidates_with_tags(raw_candidate_df, gamma)
+        logger.info("registry stage finished | stage=tag_enrichment enriched=%s", len(enriched_df))
+        if enriched_df.empty:
+            logger.warning("registry selection found no tag-enriched candidates")
+            if category_list:
+                placeholders = ",".join("?" for _ in category_list)
+                conn.execute(
+                    f"DELETE FROM selected_markets WHERE primary_domain IN ({placeholders})",
+                    tuple(category_list),
+                )
+            return enriched_df
+        selected_df = enriched_df.loc[enriched_df["primary_domain"].isin(category_list)].reset_index(drop=True)
+        replace_categories = category_list
+        selected_counts = {
+            category: int((selected_df["primary_domain"] == category).sum())
+            for category in category_list
+        }
+    else:
+        logger.info("registry stage skipped | stage=tag_enrichment enabled=false")
+        selected_df = _with_empty_tag_metadata(raw_candidate_df).reset_index(drop=True)
+        replace_categories = [*DOMAIN_PRIORITY, _UNTAGGED_PRIMARY_DOMAIN]
+        selected_counts = {_UNTAGGED_PRIMARY_DOMAIN: len(selected_df)}
     logger.info(
         "registry stage started | stage=replace_filtered_markets categories=%s selected=%s",
-        ",".join(category_list),
+        ",".join(replace_categories),
         len(selected_df),
     )
-    upsert_counts = replace_markets_for_categories(conn, selected_df, categories=category_list)
+    upsert_counts = replace_markets_for_categories(conn, selected_df, categories=replace_categories)
     logger.info(
         "registry stage finished | stage=replace_filtered_markets upsert_counts=%s",
         json.dumps(upsert_counts, ensure_ascii=True, sort_keys=True),
     )
-    selected_counts = {
-        category: int((selected_df["primary_domain"] == category).sum())
-        for category in category_list
-    }
     logger.info(
         "registry selection finished | selected_counts=%s upsert_counts=%s",
         json.dumps(selected_counts, ensure_ascii=True, sort_keys=True),

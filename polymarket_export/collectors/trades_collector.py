@@ -117,6 +117,8 @@ class TradesCollector:
         show_progress: bool = True,
         estimate_total: bool = True,
         progress_desc: str | None = None,
+        token_ids: list[str] | None = None,
+        token_outcomes: dict[str, str] | None = None,
     ) -> Any:
         """
         Download full historical trades for a market (condition id).
@@ -127,8 +129,8 @@ class TradesCollector:
           - request next batch using (timestamp_lt OR (timestamp == cursor AND id_lt))
           - repeat until empty
 
-        Immediately normalizes to a minimal schema:
-          timestamp_utc, price, size, outcome, transaction_hash
+        Immediately normalizes to a canonical fill schema suitable for
+        both storage and downstream aggregation.
 
         Size semantics:
           - subgraph amounts are often token base units
@@ -139,7 +141,11 @@ class TradesCollector:
         start_dt = ensure_datetime_utc(start_date) if start_date is not None else None
         start_ts = int(start_dt.timestamp()) if start_dt is not None else None
 
-        token_ids, token_outcomes = self._resolve_token_ids_and_outcomes(market_id)
+        if token_ids:
+            token_ids = self._clean_token_ids(token_ids)
+            token_outcomes = token_outcomes or {}
+        else:
+            token_ids, token_outcomes = self._resolve_token_ids_and_outcomes(market_id)
 
         rows: list[dict[str, Any]] = []
         batches = 0
@@ -335,6 +341,21 @@ class TradesCollector:
         if outcome is not None:
             outcome = str(outcome)
 
+        trade_id = trade.get("id")
+        if trade_id is not None:
+            trade_id = str(trade_id)
+
+        asset_id = None
+        token = trade.get("token")
+        if isinstance(token, Mapping):
+            tid = token.get("id")
+            if tid is not None:
+                asset_id = str(tid)
+        if asset_id is None:
+            asset_id = trade.get("asset_id") or trade.get("assetId")
+            if asset_id is not None:
+                asset_id = str(asset_id)
+
         txh = (
             trade.get("transaction_hash")
             or trade.get("transactionHash")
@@ -345,13 +366,33 @@ class TradesCollector:
         if txh is not None:
             txh = str(txh)
 
+        maker = trade.get("maker")
+        if maker is not None:
+            maker = str(maker)
+
+        taker = trade.get("taker")
+        if taker is not None:
+            taker = str(taker)
+
+        order_hash = trade.get("order_hash") or trade.get("orderHash")
+        if order_hash is not None:
+            order_hash = str(order_hash)
+
+        fee = TradesCollector._to_float(trade.get("fee"))
+
         return (
             {
+                "trade_id": trade_id,
                 "timestamp_utc": dt,
+                "asset_id": asset_id,
                 "price": price,
                 "size": size,
                 "outcome": outcome,
                 "transaction_hash": txh,
+                "maker": maker,
+                "taker": taker,
+                "order_hash": order_hash,
+                "fee": fee,
             },
             ts,
         )
@@ -378,6 +419,15 @@ class TradesCollector:
 
         txh = ev.get("transactionHash") or ev.get("transaction_hash") or ev.get("hash")
         txh = None if txh is None else str(txh)
+        trade_id = ev.get("id")
+        trade_id = None if trade_id is None else str(trade_id)
+        order_hash = ev.get("orderHash") or ev.get("order_hash")
+        order_hash = None if order_hash is None else str(order_hash)
+        maker = ev.get("maker")
+        maker = None if maker is None else str(maker)
+        taker = ev.get("taker")
+        taker = None if taker is None else str(taker)
+        fee = TradesCollector._to_float(ev.get("fee"))
 
         maker_asset = ev.get("makerAssetId") or ev.get("makerAssetID")
         taker_asset = ev.get("takerAssetId") or ev.get("takerAssetID")
@@ -429,11 +479,17 @@ class TradesCollector:
 
         return (
             {
+                "trade_id": trade_id,
                 "timestamp_utc": dt,
+                "asset_id": outcome_token_id,
                 "price": TradesCollector._to_float(price),
                 "size": TradesCollector._to_float(shares),
                 "outcome": outcome,
                 "transaction_hash": txh,
+                "maker": maker,
+                "taker": taker,
+                "order_hash": order_hash,
+                "fee": fee,
             },
             ts,
         )
@@ -461,6 +517,15 @@ class TradesCollector:
 
         txh = ev.get("transactionHash") or ev.get("transaction_hash") or ev.get("hash")
         txh = None if txh is None else str(txh)
+        trade_id = ev.get("id")
+        trade_id = None if trade_id is None else str(trade_id)
+        order_hash = ev.get("orderHash") or ev.get("order_hash")
+        order_hash = None if order_hash is None else str(order_hash)
+        maker = ev.get("maker")
+        maker = None if maker is None else str(maker)
+        taker = ev.get("taker")
+        taker = None if taker is None else str(taker)
+        fee = TradesCollector._to_float(ev.get("fee"))
 
         maker_asset = ev.get("makerAssetId") or ev.get("makerAssetID")
         taker_asset = ev.get("takerAssetId") or ev.get("takerAssetID")
@@ -501,11 +566,17 @@ class TradesCollector:
 
         return (
             {
+                "trade_id": trade_id,
                 "timestamp_utc": dt,
+                "asset_id": asset_id,
                 "price": TradesCollector._to_float(price),
                 "size": TradesCollector._to_float(shares),
                 "outcome": outcome,
                 "transaction_hash": txh,
+                "maker": maker,
+                "taker": taker,
+                "order_hash": order_hash,
+                "fee": fee,
             },
             ts,
         )
@@ -581,6 +652,18 @@ class TradesCollector:
             return [s]
         return None
 
+    @staticmethod
+    def _clean_token_ids(token_ids: list[Any]) -> list[str]:
+        clean_token_ids: list[str] = []
+        seen_token_ids: set[str] = set()
+        for token_id in token_ids:
+            tid = str(token_id).strip()
+            if not tid or tid in seen_token_ids:
+                continue
+            seen_token_ids.add(tid)
+            clean_token_ids.append(tid)
+        return clean_token_ids
+
     def _resolve_token_ids_and_outcomes(self, market_id: str) -> tuple[list[str], dict[str, str]]:
         """
         Resolve outcome token ids for a market.
@@ -603,15 +686,7 @@ class TradesCollector:
         if not isinstance(token_ids, list) or not token_ids:
             raise ValueError("Gamma market payload did not include clobTokenIds/clob_token_ids.")
 
-        clean_token_ids: list[str] = []
-        seen_token_ids: set[str] = set()
-        for t in token_ids:
-            tid = str(t).strip()
-            if not tid or tid in seen_token_ids:
-                continue
-            seen_token_ids.add(tid)
-            clean_token_ids.append(tid)
-
+        clean_token_ids = self._clean_token_ids(token_ids)
         if not clean_token_ids:
             raise ValueError("Gamma market payload included clobTokenIds but no usable token ids were found.")
 
@@ -693,7 +768,21 @@ class TradesCollector:
             import pandas as pd
 
             if not rows:
-                return pd.DataFrame(columns=["timestamp_utc", "price", "size", "outcome", "transaction_hash"])
+                return pd.DataFrame(
+                    columns=[
+                        "trade_id",
+                        "timestamp_utc",
+                        "asset_id",
+                        "price",
+                        "size",
+                        "outcome",
+                        "transaction_hash",
+                        "maker",
+                        "taker",
+                        "order_hash",
+                        "fee",
+                    ]
+                )
             return pd.DataFrame(rows)
         if frame == "polars":
             import polars as pl
@@ -701,11 +790,17 @@ class TradesCollector:
             if not rows:
                 return pl.DataFrame(
                     schema=[
+                        ("trade_id", pl.Utf8),
                         ("timestamp_utc", pl.Datetime(time_zone="UTC")),
+                        ("asset_id", pl.Utf8),
                         ("price", pl.Float64),
                         ("size", pl.Float64),
                         ("outcome", pl.Utf8),
                         ("transaction_hash", pl.Utf8),
+                        ("maker", pl.Utf8),
+                        ("taker", pl.Utf8),
+                        ("order_hash", pl.Utf8),
+                        ("fee", pl.Float64),
                     ]
                 )
             return pl.DataFrame(rows)
@@ -720,7 +815,7 @@ class TradesCollector:
             # Ensure types.
             if "timestamp_utc" in df.columns:
                 df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True, errors="coerce")
-            for col in ("price", "size"):
+            for col in ("price", "size", "fee"):
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -735,13 +830,24 @@ class TradesCollector:
             df = TradesCollector._normalize_and_validate_size_pandas(df)
 
             # Dedup + order
-            subset = ["timestamp_utc", "price", "size", "outcome", "transaction_hash"]
+            subset = ["trade_id"] if "trade_id" in df.columns else ["timestamp_utc", "price", "size", "outcome", "transaction_hash"]
             subset = [c for c in subset if c in df.columns]
             df = df.drop_duplicates(subset=subset, keep="first")
             df = df.sort_values("timestamp_utc", ascending=True, kind="stable").reset_index(drop=True)
 
-            # Minimal schema + stable column order
-            cols = ["timestamp_utc", "price", "size", "outcome", "transaction_hash"]
+            cols = [
+                "trade_id",
+                "timestamp_utc",
+                "asset_id",
+                "price",
+                "size",
+                "outcome",
+                "transaction_hash",
+                "maker",
+                "taker",
+                "order_hash",
+                "fee",
+            ]
             return df[[c for c in cols if c in df.columns]]
 
         if frame == "polars":
@@ -754,7 +860,7 @@ class TradesCollector:
                     .dt.replace_time_zone("UTC")
                     .alias("timestamp_utc")
                 )
-            for col in ("price", "size"):
+            for col in ("price", "size", "fee"):
                 if col in df.columns:
                     df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False).alias(col))
 
@@ -763,14 +869,26 @@ class TradesCollector:
 
             df = TradesCollector._normalize_and_validate_size_polars(df)
 
-            subset = ["timestamp_utc", "price", "size", "outcome", "transaction_hash"]
+            subset = ["trade_id"] if "trade_id" in df.columns else ["timestamp_utc", "price", "size", "outcome", "transaction_hash"]
             subset = [c for c in subset if c in df.columns]
             if subset:
                 df = df.unique(subset=subset, keep="first")
             if "timestamp_utc" in df.columns:
                 df = df.sort("timestamp_utc")
 
-            cols = ["timestamp_utc", "price", "size", "outcome", "transaction_hash"]
+            cols = [
+                "trade_id",
+                "timestamp_utc",
+                "asset_id",
+                "price",
+                "size",
+                "outcome",
+                "transaction_hash",
+                "maker",
+                "taker",
+                "order_hash",
+                "fee",
+            ]
             return df.select([c for c in cols if c in df.columns])
 
         raise ValueError(f"Unknown frame_type: {frame!r}")

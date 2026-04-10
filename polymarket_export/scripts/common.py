@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import logging
 from pathlib import Path
 
@@ -23,3 +24,21 @@ def setup_logging(level: str, *, log_path: Path) -> None:
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setFormatter(formatter)
     root.addHandler(file_handler)
+
+
+def init_run_context(
+    *,
+    log_level: str,
+    log_dir: str | Path,
+    log_stem: str,
+    db_path: str | Path,
+) -> tuple[Path, Path]:
+    """Resolve per-run paths, configure logging, and ensure the DB parent exists."""
+    timestamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+    resolved_log_dir = Path(log_dir).expanduser().resolve()
+    log_path = resolved_log_dir / f"{log_stem}_{timestamp}.log"
+    setup_logging(log_level, log_path=log_path)
+
+    resolved_db_path = Path(db_path).expanduser().resolve()
+    resolved_db_path.parent.mkdir(parents=True, exist_ok=True)
+    return resolved_db_path, log_path

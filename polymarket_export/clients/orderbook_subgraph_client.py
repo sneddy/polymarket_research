@@ -38,6 +38,10 @@ class FillQuerySpec:
     asset_id_gql_type: str
     timestamp_gql_type: str
     id_gql_type: str
+    maker_field: str | None = None
+    taker_field: str | None = None
+    order_hash_field: str | None = None
+    fee_field: str | None = None
     connection_entity: str | None = None
 
 
@@ -264,6 +268,10 @@ class OrderbookSubgraphClient:
                     taker_amt=spec.taker_amount_field,
                     timestamp_field=spec.timestamp_field,
                     tx_hash_field=spec.tx_hash_field,
+                    maker_field=spec.maker_field,
+                    taker_field=spec.taker_field,
+                    order_hash_field=spec.order_hash_field,
+                    fee_field=spec.fee_field,
                     asset_id_gql_type=spec.asset_id_gql_type,
                     timestamp_gql_type=spec.timestamp_gql_type,
                     id_gql_type=spec.id_gql_type,
@@ -278,6 +286,12 @@ class OrderbookSubgraphClient:
         # Peek first non-empty among candidate entities.
         for spec in self._discover_event_query_specs():
             var_defs = "$first: Int!"
+            optional_selection = self._optional_event_selection_block(
+                maker_field=spec.maker_field,
+                taker_field=spec.taker_field,
+                order_hash_field=spec.order_hash_field,
+                fee_field=spec.fee_field,
+            )
             query = f"""
             query Peek({var_defs}) {{
               {spec.entity}(first: $first, orderBy: {spec.timestamp_field}, orderDirection: desc) {{
@@ -288,6 +302,7 @@ class OrderbookSubgraphClient:
                 takerAssetId: {spec.taker_asset_field}
                 makerAmountFilled: {spec.maker_amount_field}
                 takerAmountFilled: {spec.taker_amount_field}
+                {optional_selection}
               }}
             }}
             """
@@ -446,6 +461,10 @@ class OrderbookSubgraphClient:
         taker_amt: str,
         timestamp_field: str,
         tx_hash_field: str,
+        maker_field: str | None,
+        taker_field: str | None,
+        order_hash_field: str | None,
+        fee_field: str | None,
         asset_id_gql_type: str,
         timestamp_gql_type: str,
         id_gql_type: str,
@@ -464,6 +483,10 @@ class OrderbookSubgraphClient:
                 taker_amt=taker_amt,
                 timestamp_field=timestamp_field,
                 tx_hash_field=tx_hash_field,
+                maker_field=maker_field,
+                taker_field=taker_field,
+                order_hash_field=order_hash_field,
+                fee_field=fee_field,
                 asset_id_gql_type=asset_id_gql_type,
                 timestamp_gql_type=timestamp_gql_type,
                 id_gql_type=id_gql_type,
@@ -486,6 +509,10 @@ class OrderbookSubgraphClient:
             taker_amt=taker_amt,
             timestamp_field=timestamp_field,
             tx_hash_field=tx_hash_field,
+            maker_field=maker_field,
+            taker_field=taker_field,
+            order_hash_field=order_hash_field,
+            fee_field=fee_field,
             asset_id_gql_type=asset_id_gql_type,
             timestamp_gql_type=timestamp_gql_type,
             id_gql_type=id_gql_type,
@@ -503,6 +530,10 @@ class OrderbookSubgraphClient:
             taker_amt=taker_amt,
             timestamp_field=timestamp_field,
             tx_hash_field=tx_hash_field,
+            maker_field=maker_field,
+            taker_field=taker_field,
+            order_hash_field=order_hash_field,
+            fee_field=fee_field,
             asset_id_gql_type=asset_id_gql_type,
             timestamp_gql_type=timestamp_gql_type,
             id_gql_type=id_gql_type,
@@ -535,6 +566,10 @@ class OrderbookSubgraphClient:
         taker_amt: str,
         timestamp_field: str,
         tx_hash_field: str,
+        maker_field: str | None,
+        taker_field: str | None,
+        order_hash_field: str | None,
+        fee_field: str | None,
         asset_id_gql_type: str,
         timestamp_gql_type: str,
         id_gql_type: str,
@@ -570,6 +605,12 @@ class OrderbookSubgraphClient:
         if cursor is not None:
             var_defs.extend([f"$cursorTs: {timestamp_gql_type}!", f"$cursorId: {id_gql_type}!"])
         var_defs_s = ", ".join(var_defs)
+        optional_selection = self._optional_event_selection_block(
+            maker_field=maker_field,
+            taker_field=taker_field,
+            order_hash_field=order_hash_field,
+            fee_field=fee_field,
+        )
 
         query = f"""
         query Fills({var_defs_s}) {{
@@ -586,6 +627,7 @@ class OrderbookSubgraphClient:
             takerAssetId: {taker_asset}
             makerAmountFilled: {maker_amt}
             takerAmountFilled: {taker_amt}
+            {optional_selection}
           }}
         }}
         """
@@ -609,6 +651,10 @@ class OrderbookSubgraphClient:
         taker_amt: str,
         timestamp_field: str,
         tx_hash_field: str,
+        maker_field: str | None,
+        taker_field: str | None,
+        order_hash_field: str | None,
+        fee_field: str | None,
         asset_id_gql_type: str,
         timestamp_gql_type: str,
         id_gql_type: str,
@@ -638,6 +684,12 @@ class OrderbookSubgraphClient:
         if cursor is not None:
             var_defs.extend([f"$cursorTs: {timestamp_gql_type}!", f"$cursorId: {id_gql_type}!"])
         var_defs_s = ", ".join(var_defs)
+        optional_selection = self._optional_event_selection_block(
+            maker_field=maker_field,
+            taker_field=taker_field,
+            order_hash_field=order_hash_field,
+            fee_field=fee_field,
+        )
 
         query = f"""
         query Fills({var_defs_s}) {{
@@ -654,6 +706,7 @@ class OrderbookSubgraphClient:
             takerAssetId: {taker_asset}
             makerAmountFilled: {maker_amt}
             takerAmountFilled: {taker_amt}
+            {optional_selection}
           }}
         }}
         """
@@ -823,6 +876,10 @@ class OrderbookSubgraphClient:
             taker_amt = pick_field(["takerAmountFilled", "takerAmount"])
             timestamp_field = pick_field(["timestamp", "createdAt", "time"]) or "timestamp"
             tx_hash_field = pick_field(["transactionHash", "txHash", "hash"]) or "transactionHash"
+            maker_field = pick_field(["maker"])
+            taker_field = pick_field(["taker"])
+            order_hash_field = pick_field(["orderHash", "order_hash"])
+            fee_field = pick_field(["fee"])
 
             if not maker_asset or not taker_asset or not maker_amt or not taker_amt:
                 continue
@@ -849,6 +906,10 @@ class OrderbookSubgraphClient:
                     asset_id_gql_type=asset_type,
                     timestamp_gql_type=ts_type,
                     id_gql_type=id_type,
+                    maker_field=maker_field,
+                    taker_field=taker_field,
+                    order_hash_field=order_hash_field,
+                    fee_field=fee_field,
                     connection_entity=connection_entity,
                 )
             )
@@ -867,12 +928,35 @@ class OrderbookSubgraphClient:
                     asset_id_gql_type="String",
                     timestamp_gql_type="BigInt",
                     id_gql_type="ID",
+                    maker_field="maker",
+                    taker_field="taker",
+                    order_hash_field="orderHash",
+                    fee_field="fee",
                     connection_entity=None,
                 )
             ]
 
         setattr(self, "_event_specs", specs)
         return specs
+
+    @staticmethod
+    def _optional_event_selection_block(
+        *,
+        maker_field: str | None,
+        taker_field: str | None,
+        order_hash_field: str | None,
+        fee_field: str | None,
+    ) -> str:
+        lines: list[str] = []
+        if maker_field:
+            lines.append(f"maker: {maker_field}")
+        if taker_field:
+            lines.append(f"taker: {taker_field}")
+        if order_hash_field:
+            lines.append(f"orderHash: {order_hash_field}")
+        if fee_field:
+            lines.append(f"fee: {fee_field}")
+        return "\n            ".join(lines)
 
     # -----------------------
     # Internals

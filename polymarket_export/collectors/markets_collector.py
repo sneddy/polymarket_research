@@ -215,7 +215,8 @@ class MarketsCollector:
         )
 
         rows: list[dict[str, Any]] = []
-        progress_every = max(25, int(limit))
+        progress_every = max(1000, int(limit))
+        pending_progress = 0
         inferred_descending: bool | None = None
         prev_created_at: datetime | None = None
         stopped_early = False
@@ -249,8 +250,10 @@ class MarketsCollector:
                         continue
                 rows.append(to_snake_case_keys(item) if normalize_keys else item)
                 if pbar is not None:
-                    pbar.update(1)
-                    if len(rows) % progress_every == 0:
+                    pending_progress += 1
+                    if pending_progress >= progress_every:
+                        pbar.update(pending_progress)
+                        pending_progress = 0
                         postfix = {"fetched": len(rows), "state": state_label}
                         if created_at is not None:
                             postfix["created_at"] = created_at.strftime("%Y-%m-%d")
@@ -258,6 +261,9 @@ class MarketsCollector:
                             postfix["order"] = "desc" if inferred_descending else "asc"
                         pbar.set_postfix(postfix)
             if pbar is not None:
+                if pending_progress:
+                    pbar.update(pending_progress)
+                    pending_progress = 0
                 postfix = {"fetched": len(rows), "state": state_label}
                 if stopped_early:
                     postfix["cutoff_stop"] = True
@@ -385,7 +391,8 @@ class MarketsCollector:
 
         rows: list[dict[str, Any]] = []
         errors: list[str] = []
-        progress_every = max(25, int(limit))
+        progress_every = max(1000, int(limit))
+        pending_progress = 0
 
         def _progress_market_ref(item: dict[str, Any]) -> tuple[str | None, str | None]:
             market_id = item.get("id")
@@ -460,8 +467,10 @@ class MarketsCollector:
                         rows.append(to_snake_case_keys(item) if normalize_keys else item)
                         last_market_id, last_slug = _progress_market_ref(item)
                         if pbar is not None:
-                            pbar.update(1)
-                            if len(rows) % progress_every == 0:
+                            pending_progress += 1
+                            if pending_progress >= progress_every:
+                                pbar.update(pending_progress)
+                                pending_progress = 0
                                 market_id_text, slug_text = _progress_market_ref(item)
                                 postfix = {"state": state_label, "fetched": len(rows)}
                                 if created_at is not None:
@@ -473,6 +482,9 @@ class MarketsCollector:
                                 if inferred_descending is not None:
                                     postfix["order"] = "desc" if inferred_descending else "asc"
                                 pbar.set_postfix(postfix)
+                    if pbar is not None and pending_progress:
+                        pbar.update(pending_progress)
+                        pending_progress = 0
                     if state_stopped_early and pbar is not None:
                         postfix = {"state": state_label, "fetched": len(rows), "cutoff_stop": True}
                         if prev_created_at is not None:
