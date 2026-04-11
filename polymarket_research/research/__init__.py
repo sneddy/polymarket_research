@@ -1,13 +1,8 @@
-"""Research-layer helpers for reusable experimental pipelines."""
+"""Research-layer modules.
 
-from polymarket_research.research.foundation import (
-    ExternalShockBuilder,
-    MarketPanelBuilder,
-    RetrievedContextBuilder,
-)
+This package intentionally avoids eager imports because some legacy research
+helpers depend on unfinished benchmark code that is not part of the stable
+package surface.
+"""
 
-__all__ = [
-    "ExternalShockBuilder",
-    "MarketPanelBuilder",
-    "RetrievedContextBuilder",
-]
+__all__: list[str] = []

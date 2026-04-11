@@ -34,25 +34,53 @@ def open_sqlite_dataset(db_path: str | Path | None = None) -> sqlite3.Connection
     return conn
 
 
-def load_markets_for_domains(
-    conn: sqlite3.Connection,
-    *,
-    domains: tuple[str, ...],
-    max_markets_per_domain: int,
-    min_probability_rows: int,
-) -> pd.DataFrame:
-    """Load eligible markets for each requested domain and concatenate them into one dataframe."""
+def load_selected_markets(conn: sqlite3.Connection) -> pd.DataFrame:
+    """Load the full selected-market registry plus export download metadata."""
 
-    frames = [
-        _load_eligible_markets(
-            conn,
-            domain=domain,
-            max_markets=max_markets_per_domain,
-            min_probability_rows=min_probability_rows,
-        )
-        for domain in domains
-    ]
-    return pd.concat(frames, ignore_index=True)
+    query = """
+    SELECT
+        m.market_id,
+        m.condition_id,
+        COALESCE(u.market_slug, m.market_slug) AS market_slug,
+        COALESCE(u.event_id, m.event_id) AS event_id,
+        COALESCE(u.event_slug, m.event_slug) AS event_slug,
+        COALESCE(u.event_title, m.event_title) AS event_title,
+        COALESCE(u.event_series_slug, m.event_series_slug) AS event_series_slug,
+        COALESCE(u.question, m.question) AS question,
+        COALESCE(u.description, m.description) AS description,
+        COALESCE(u.resolution_source, m.resolution_source) AS resolution_source,
+        COALESCE(m.active, 0) AS active,
+        COALESCE(u.closed, m.closed, 0) AS closed,
+        COALESCE(u.archived, m.archived, 0) AS archived,
+        COALESCE(u.created_at, m.created_at) AS created_at,
+        COALESCE(u.end_date, m.end_date) AS end_date,
+        COALESCE(u.volume_num, m.volume_num) AS volume_num,
+        COALESCE(u.liquidity_num, m.liquidity_num) AS liquidity_num,
+        m.final_outcome,
+        m.final_yes_probability,
+        m.tag_labels,
+        m.matched_tags,
+        m.matched_domains,
+        m.primary_domain,
+        COALESCE(u.synced_at_utc, m.synced_at_utc) AS synced_at_utc,
+        a.added_at_utc,
+        a.trade_rows,
+        a.probability_rows,
+        a.probability_start_utc,
+        a.probability_end_utc,
+        a.raw_trade_rows,
+        a.raw_trade_start_utc,
+        a.raw_trade_end_utc,
+        a.raw_trades_saved
+    FROM selected_markets AS m
+    LEFT JOIN market_universe AS u
+        ON u.market_id = m.market_id
+    LEFT JOIN added_markets AS a
+        ON a.market_id = m.market_id
+    ORDER BY COALESCE(u.created_at, m.created_at) DESC, COALESCE(u.volume_num, m.volume_num, 0.0) DESC
+    """
+    frame = pd.read_sql_query(query, conn)
+    return _normalize_market_frame(frame)
 
 
 def load_probabilities_for_market_frame(
@@ -93,62 +121,6 @@ def load_saved_dataset_frames(directory: str | Path) -> tuple[pd.DataFrame, pd.D
     markets = pd.read_parquet(source_dir / "markets.parquet")
     probabilities = pd.read_parquet(source_dir / "probabilities.parquet")
     return markets, probabilities
-
-
-def _load_eligible_markets(
-    conn: sqlite3.Connection,
-    *,
-    domain: str,
-    max_markets: int,
-    min_probability_rows: int,
-) -> pd.DataFrame:
-    """Load one domain-specific market table from SQLite using downloaded histories plus broad universe metadata."""
-
-    query = """
-    SELECT
-        a.market_id,
-        COALESCE(u.market_slug, m.market_slug, a.market_slug) AS market_slug,
-        COALESCE(u.event_id, m.event_id) AS event_id,
-        COALESCE(u.event_slug, m.event_slug) AS event_slug,
-        COALESCE(u.event_title, m.event_title) AS event_title,
-        COALESCE(u.event_series_slug, m.event_series_slug) AS event_series_slug,
-        COALESCE(u.question, m.question) AS question,
-        COALESCE(u.description, m.description) AS description,
-        COALESCE(u.resolution_source, m.resolution_source) AS resolution_source,
-        COALESCE(u.active, m.active, 0) AS active,
-        COALESCE(u.closed, m.closed, 0) AS closed,
-        COALESCE(u.archived, m.archived, 0) AS archived,
-        COALESCE(u.created_at, m.created_at) AS created_at,
-        COALESCE(u.end_date, m.end_date) AS end_date,
-        COALESCE(u.volume_num, m.volume_num) AS volume_num,
-        COALESCE(u.final_outcome, m.final_outcome) AS final_outcome,
-        m.final_yes_probability,
-        m.tag_labels,
-        COALESCE(a.primary_domain, m.primary_domain) AS primary_domain,
-        COALESCE(u.synced_at_utc, m.synced_at_utc) AS synced_at_utc,
-        a.trade_rows,
-        a.probability_rows,
-        a.probability_start_utc,
-        a.probability_end_utc
-    FROM added_markets AS a
-    LEFT JOIN market_universe AS u
-        ON u.market_id = a.market_id
-    LEFT JOIN markets AS m
-        ON a.market_id = m.market_id
-    WHERE a.primary_domain = ?
-      AND a.primary_domain = ?
-      AND a.probability_rows >= ?
-      AND COALESCE(u.end_date, m.end_date) IS NOT NULL
-      AND COALESCE(u.created_at, m.created_at) IS NOT NULL
-    ORDER BY COALESCE(u.volume_num, m.volume_num, 0.0) DESC, COALESCE(u.created_at, m.created_at) DESC
-    LIMIT ?
-    """
-    frame = pd.read_sql_query(
-        query,
-        conn,
-        params=(domain, domain, int(min_probability_rows), int(max_markets)),
-    )
-    return _normalize_market_frame(frame)
 
 
 def _load_probabilities_for_markets(

@@ -1,13 +1,22 @@
-requests>=2.32
-pandas>=2.2
-numpy>=1.26
-pyarrow>=16
+tqdm>=4.66
+# exporting
 websockets>=12
 polars>=1.0
-tqdm>=4.66
+requests>=2.32
+pyarrow>=16
+# ml
+pandas>=2.2
+numpy>=1.26
+umap-learn==0.5.12
 scikit-learn>=1.5
-matplotlib==3.10.8
+# torch>=2.1
+# visualization
+matplotlib>=3.10
 seaborn>=0.13
+# nlp
+nltk>=3.9
+sentence-transformers>=5.4
+turftopic>=0.25
 # dev
 ipywidgets>=8.0
 jupyter>=1.1.1
