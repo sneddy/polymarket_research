@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 
@@ -20,11 +21,42 @@ def _empty_frame(columns: list[str]) -> pd.DataFrame:
     return pd.DataFrame(columns=columns)
 
 
-@dataclass
-class RawPolymarketDataset:
-    """Load, hold, and persist raw Polymarket export tables for research use."""
+def _apply_market_selection(
+    selected_markets: pd.DataFrame,
+    *,
+    market_limit: int | None = None,
+    market_order: Literal["latest", "largest"] | None = None,
+) -> pd.DataFrame:
+    """Apply a stable market ordering and optional limit to the selected-market registry."""
+    if selected_markets.empty:
+        return selected_markets
 
-    db_path: Path = field(default_factory=default_db_path)
+    order = (market_order or "latest").strip().lower() if market_order is not None else None
+    out = selected_markets.copy()
+
+    if order is None or order == "latest":
+        # Base loader already returns created_at DESC, volume_num DESC, but keep this explicit.
+        sort_columns = [column for column in ("created_at", "volume_num") if column in out.columns]
+        ascending = [False] * len(sort_columns)
+        if sort_columns:
+            out = out.sort_values(sort_columns, ascending=ascending, kind="stable")
+    elif order == "largest":
+        sort_columns = [column for column in ("volume_num", "created_at") if column in out.columns]
+        ascending = [False] * len(sort_columns)
+        if sort_columns:
+            out = out.sort_values(sort_columns, ascending=ascending, kind="stable")
+    else:
+        raise ValueError("market_order must be one of: None, 'latest', 'largest'.")
+
+    if market_limit is not None:
+        out = out.head(int(market_limit))
+    return out.reset_index(drop=True)
+
+
+@dataclass
+class RawPolymarketBundle:
+    """Materialized raw export tables held in memory for research use."""
+
     market_universe: pd.DataFrame | None = None
     selected_markets: pd.DataFrame | None = None
     added_markets: pd.DataFrame | None = None
@@ -39,77 +71,6 @@ class RawPolymarketDataset:
     @markets.setter
     def markets(self, value: pd.DataFrame | None) -> None:
         self.selected_markets = value
-
-    def load_selected_markets(self) -> pd.DataFrame:
-        """Load the full selected market registry from SQLite."""
-        with open_sqlite_dataset(self.db_path) as conn:
-            self.selected_markets = load_selected_markets(conn)
-        return self.selected_markets
-
-    def load_market_universe(self) -> pd.DataFrame:
-        """Load raw market-universe rows for the currently selected market ids."""
-        if self.selected_markets is None:
-            self.load_selected_markets()
-        assert self.selected_markets is not None
-
-        with open_sqlite_dataset(self.db_path) as conn:
-            self.market_universe = _load_table_for_market_ids(
-                conn,
-                table_name="market_universe",
-                market_ids=self.selected_markets["market_id"].tolist(),
-                order_by="created_at DESC",
-            )
-        return self.market_universe
-
-    def load_added_markets(self) -> pd.DataFrame:
-        """Load the added-markets manifest rows for the current selected scope."""
-        if self.selected_markets is None:
-            self.load_selected_markets()
-        assert self.selected_markets is not None
-
-        with open_sqlite_dataset(self.db_path) as conn:
-            self.added_markets = _load_table_for_market_ids(
-                conn,
-                table_name="added_markets",
-                market_ids=self.selected_markets["market_id"].tolist(),
-                order_by="added_at_utc DESC",
-            )
-        return self.added_markets
-
-    def load_probabilities(self) -> pd.DataFrame:
-        """Load raw probability history for the currently selected markets."""
-        if self.selected_markets is None:
-            self.load_selected_markets()
-        assert self.selected_markets is not None
-
-        with open_sqlite_dataset(self.db_path) as conn:
-            self.probabilities = load_probabilities_for_market_frame(conn, self.selected_markets)
-        return self.probabilities
-
-    def load_raw_trades(self) -> pd.DataFrame:
-        """Load raw normalized fill rows for the currently selected markets."""
-        if self.selected_markets is None:
-            self.load_selected_markets()
-        assert self.selected_markets is not None
-
-        with open_sqlite_dataset(self.db_path) as conn:
-            self.raw_trades = _load_table_for_market_ids(
-                conn,
-                table_name="raw_trades",
-                market_ids=self.selected_markets["market_id"].tolist(),
-                order_by="market_id, timestamp_utc",
-            )
-        return self.raw_trades
-
-    def load(self, *, include_raw_trades: bool = False) -> "RawPolymarketDataset":
-        """Load the raw export tables for the configured selected-market scope."""
-        self.load_selected_markets()
-        self.load_market_universe()
-        self.load_added_markets()
-        self.load_probabilities()
-        if include_raw_trades:
-            self.load_raw_trades()
-        return self
 
     @property
     def is_loaded(self) -> bool:
@@ -193,16 +154,141 @@ class RawPolymarketDataset:
         if not self.is_loaded:
             raise RuntimeError("Core raw tables must be loaded before save().")
 
-        target_dir = Path(directory)
+        return RawSnapshot(directory).save_bundle(self)
+
+    @classmethod
+    def from_parquet(cls, directory: str | Path) -> "RawPolymarketBundle":
+        """Instantiate the raw dataset object from saved parquet files."""
+        return RawPolymarketSnapshot(directory).load_bundle()
+
+
+@dataclass
+class RawPolymarketHandle:
+    """Access raw export tables from SQLite without requiring eager materialization."""
+
+    db_path: Path = field(default_factory=default_db_path)
+    cache_dir: Path | None = None
+    chunk_size: int = 250
+
+    def load_selected_markets(
+        self,
+        *,
+        market_limit: int | None = None,
+        market_order: Literal["latest", "largest"] | None = None,
+    ) -> pd.DataFrame:
+        """Load the full selected market registry from SQLite."""
+        with open_sqlite_dataset(self.db_path) as conn:
+            selected_markets = load_selected_markets(conn)
+        return _apply_market_selection(
+            selected_markets,
+            market_limit=market_limit,
+            market_order=market_order,
+        )
+
+    def load_market_universe(self, selected_markets: pd.DataFrame | None = None) -> pd.DataFrame:
+        """Load raw market-universe rows for the provided or default selected market ids."""
+        selected = self._ensure_selected_markets(selected_markets)
+        with open_sqlite_dataset(self.db_path) as conn:
+            return _load_table_for_market_ids(
+                conn,
+                table_name="market_universe",
+                market_ids=selected["market_id"].tolist(),
+                order_by="created_at DESC",
+                chunk_size=self.chunk_size,
+            )
+
+    def load_added_markets(self, selected_markets: pd.DataFrame | None = None) -> pd.DataFrame:
+        """Load added-markets manifest rows for the provided or default selected scope."""
+        selected = self._ensure_selected_markets(selected_markets)
+        with open_sqlite_dataset(self.db_path) as conn:
+            return _load_table_for_market_ids(
+                conn,
+                table_name="added_markets",
+                market_ids=selected["market_id"].tolist(),
+                order_by="added_at_utc DESC",
+                chunk_size=self.chunk_size,
+            )
+
+    def load_probabilities(self, selected_markets: pd.DataFrame | None = None) -> pd.DataFrame:
+        """Load raw probability history for the provided or default selected markets."""
+        selected = self._ensure_selected_markets(selected_markets)
+        with open_sqlite_dataset(self.db_path) as conn:
+            return load_probabilities_for_market_frame(conn, selected)
+
+    def load_raw_trades(self, selected_markets: pd.DataFrame | None = None) -> pd.DataFrame:
+        """Load raw normalized fill rows for the provided or default selected markets."""
+        selected = self._ensure_selected_markets(selected_markets)
+        with open_sqlite_dataset(self.db_path) as conn:
+            return _load_table_for_market_ids(
+                conn,
+                table_name="raw_trades",
+                market_ids=selected["market_id"].tolist(),
+                order_by="market_id, timestamp_utc",
+                chunk_size=self.chunk_size,
+            )
+
+    def load_bundle(
+        self,
+        *,
+        include_market_universe: bool = True,
+        include_download_manifest: bool = False,
+        include_probabilities: bool = True,
+        include_raw_trades: bool = False,
+        market_limit: int | None = None,
+        market_order: Literal["latest", "largest"] | None = None,
+    ) -> RawPolymarketBundle:
+        """Materialize a raw bundle with optional large tables."""
+        selected_markets = self.load_selected_markets(
+            market_limit=market_limit,
+            market_order=market_order,
+        )
+        market_universe = self.load_market_universe(selected_markets) if include_market_universe else None
+        added_markets = self.load_added_markets(selected_markets) if include_download_manifest else None
+        probabilities = self.load_probabilities(selected_markets) if include_probabilities else None
+        raw_trades = self.load_raw_trades(selected_markets) if include_raw_trades else None
+        return RawPolymarketBundle(
+            market_universe=market_universe,
+            selected_markets=selected_markets,
+            added_markets=added_markets,
+            probabilities=probabilities,
+            raw_trades=raw_trades,
+        )
+
+    def snapshot(self, directory: str | Path | None = None) -> "RawPolymarketSnapshot":
+        """Return a snapshot helper for the configured cache directory."""
+        target = directory if directory is not None else self.cache_dir
+        if target is None:
+            raise ValueError("snapshot() requires an explicit directory or cache_dir on the handle.")
+        return RawPolymarketSnapshot(target)
+
+    def _ensure_selected_markets(self, selected_markets: pd.DataFrame | None) -> pd.DataFrame:
+        if selected_markets is not None:
+            return selected_markets
+        return self.load_selected_markets()
+
+
+@dataclass(frozen=True)
+class RawPolymarketSnapshot:
+    """Persist and reload materialized raw bundles as parquet snapshots."""
+
+    directory: Path | str
+
+    @property
+    def path(self) -> Path:
+        return Path(self.directory)
+
+    def save_bundle(self, bundle: RawPolymarketBundle) -> pd.DataFrame:
+        """Save a materialized raw bundle as parquet files."""
+        target_dir = self.path
         target_dir.mkdir(parents=True, exist_ok=True)
 
         outputs: list[tuple[str, pd.DataFrame | None]] = [
-            ("market_universe.parquet", self.market_universe),
-            ("selected_markets.parquet", self.selected_markets),
-            ("markets.parquet", self.selected_markets),
-            ("added_markets.parquet", self.added_markets),
-            ("probabilities.parquet", self.probabilities),
-            ("raw_trades.parquet", self.raw_trades),
+            ("market_universe.parquet", bundle.market_universe),
+            ("selected_markets.parquet", bundle.selected_markets),
+            ("markets.parquet", bundle.selected_markets),
+            ("added_markets.parquet", bundle.added_markets),
+            ("probabilities.parquet", bundle.probabilities),
+            ("raw_trades.parquet", bundle.raw_trades),
         ]
         manifest_rows: list[dict[str, object]] = []
         for filename, frame in outputs:
@@ -212,11 +298,16 @@ class RawPolymarketDataset:
             manifest_rows.append({"file": filename, "rows": len(frame), "cols": frame.shape[1]})
         return pd.DataFrame(manifest_rows)
 
-    @classmethod
-    def from_parquet(cls, directory: str | Path) -> "RawPolymarketDataset":
-        """Instantiate the raw dataset object from saved parquet files."""
-        source_dir = Path(directory)
-        instance = cls()
+    def load_bundle(
+        self,
+        *,
+        include_download_manifest: bool = False,
+        include_raw_trades: bool = True,
+        market_limit: int | None = None,
+        market_order: Literal["latest", "largest"] | None = None,
+    ) -> RawPolymarketBundle:
+        """Load a materialized raw bundle from parquet files."""
+        source_dir = self.path
 
         selected_path = source_dir / "selected_markets.parquet"
         legacy_markets_path = source_dir / "markets.parquet"
@@ -225,41 +316,138 @@ class RawPolymarketDataset:
         probabilities_path = source_dir / "probabilities.parquet"
         raw_trades_path = source_dir / "raw_trades.parquet"
 
-        instance.selected_markets = (
+        selected_markets = (
             pd.read_parquet(selected_path)
             if selected_path.exists()
             else pd.read_parquet(legacy_markets_path)
         )
-        instance.market_universe = (
-            pd.read_parquet(market_universe_path)
+        selected_markets = _apply_market_selection(
+            selected_markets,
+            market_limit=market_limit,
+            market_order=market_order,
+        )
+        market_universe = (
+            _normalize_generic_export_frame(pd.read_parquet(market_universe_path))
             if market_universe_path.exists()
-            else instance.selected_markets.copy()
+            else selected_markets.copy()
         )
-        instance.added_markets = (
-            pd.read_parquet(added_markets_path)
-            if added_markets_path.exists()
-            else _empty_frame(
-                [
-                    "market_id",
-                    "condition_id",
-                    "market_slug",
-                    "primary_domain",
-                    "added_at_utc",
-                    "trade_rows",
-                    "probability_rows",
-                    "probability_start_utc",
-                    "probability_end_utc",
-                    "storage_path",
-                    "raw_trade_rows",
-                    "raw_trade_start_utc",
-                    "raw_trade_end_utc",
-                    "raw_trades_saved",
-                ]
+        selected_ids = set(selected_markets["market_id"].astype(str).tolist())
+        if not market_universe.empty:
+            market_universe = market_universe.loc[market_universe["market_id"].astype(str).isin(selected_ids)].reset_index(drop=True)
+        added_markets = None
+        if include_download_manifest:
+            added_markets = (
+                _normalize_generic_export_frame(pd.read_parquet(added_markets_path))
+                if added_markets_path.exists()
+                else _empty_frame(
+                    [
+                        "market_id",
+                        "condition_id",
+                        "market_slug",
+                        "primary_domain",
+                        "added_at_utc",
+                        "trade_rows",
+                        "probability_rows",
+                        "probability_start_utc",
+                        "probability_end_utc",
+                        "storage_path",
+                        "raw_trade_rows",
+                        "raw_trade_start_utc",
+                        "raw_trade_end_utc",
+                        "raw_trades_saved",
+                    ]
+                )
             )
+            if not added_markets.empty:
+                added_markets = added_markets.loc[added_markets["market_id"].astype(str).isin(selected_ids)].reset_index(drop=True)
+        probabilities = _normalize_generic_export_frame(pd.read_parquet(probabilities_path)) if probabilities_path.exists() else None
+        if probabilities is not None and not probabilities.empty:
+            probabilities = probabilities.loc[probabilities["market_id"].astype(str).isin(selected_ids)].reset_index(drop=True)
+        raw_trades = _normalize_generic_export_frame(pd.read_parquet(raw_trades_path)) if include_raw_trades and raw_trades_path.exists() else None
+        if raw_trades is not None and not raw_trades.empty:
+            raw_trades = raw_trades.loc[raw_trades["market_id"].astype(str).isin(selected_ids)].reset_index(drop=True)
+        return RawPolymarketBundle(
+            market_universe=market_universe,
+            selected_markets=selected_markets,
+            added_markets=added_markets,
+            probabilities=probabilities,
+            raw_trades=raw_trades,
         )
-        instance.probabilities = pd.read_parquet(probabilities_path)
-        instance.raw_trades = pd.read_parquet(raw_trades_path) if raw_trades_path.exists() else None
+
+
+@dataclass
+class RawPolymarketDataset(RawPolymarketBundle):
+    """Backward-compatible raw dataset wrapper around the new handle/bundle split."""
+
+    db_path: Path = field(default_factory=default_db_path)
+
+    @property
+    def handle(self) -> RawPolymarketHandle:
+        return RawPolymarketHandle(db_path=self.db_path)
+
+    def load_selected_markets(self) -> pd.DataFrame:
+        self.selected_markets = self.handle.load_selected_markets()
+        return self.selected_markets
+
+    def load_market_universe(self) -> pd.DataFrame:
+        self.market_universe = self.handle.load_market_universe(self.selected_markets)
+        return self.market_universe
+
+    def load_added_markets(self) -> pd.DataFrame:
+        self.added_markets = self.handle.load_added_markets(self.selected_markets)
+        return self.added_markets
+
+    def load_probabilities(self) -> pd.DataFrame:
+        self.probabilities = self.handle.load_probabilities(self.selected_markets)
+        return self.probabilities
+
+    def load_raw_trades(self) -> pd.DataFrame:
+        self.raw_trades = self.handle.load_raw_trades(self.selected_markets)
+        return self.raw_trades
+
+    def load(
+        self,
+        *,
+        include_market_universe: bool = True,
+        include_download_manifest: bool = False,
+        include_probabilities: bool = True,
+        include_raw_trades: bool = False,
+        market_limit: int | None = None,
+        market_order: Literal["latest", "largest"] | None = None,
+    ) -> "RawPolymarketDataset":
+        """Load raw export tables into this compatibility wrapper."""
+        bundle = self.handle.load_bundle(
+            include_market_universe=include_market_universe,
+            include_download_manifest=include_download_manifest,
+            include_probabilities=include_probabilities,
+            include_raw_trades=include_raw_trades,
+            market_limit=market_limit,
+            market_order=market_order,
+        )
+        self.market_universe = bundle.market_universe
+        self.selected_markets = bundle.selected_markets
+        self.added_markets = bundle.added_markets
+        self.probabilities = bundle.probabilities
+        self.raw_trades = bundle.raw_trades
+        return self
+
+    @classmethod
+    def from_parquet(cls, directory: str | Path) -> "RawPolymarketDataset":
+        """Instantiate the compatibility wrapper from saved parquet files."""
+        bundle = RawPolymarketSnapshot(directory).load_bundle()
+        instance = cls()
+        instance.market_universe = bundle.market_universe
+        instance.selected_markets = bundle.selected_markets
+        instance.added_markets = bundle.added_markets
+        instance.probabilities = bundle.probabilities
+        instance.raw_trades = bundle.raw_trades
         return instance
+
+
+# Backward-compatible aliases for the shorter generic names.
+RawDatasetBundle = RawPolymarketBundle
+RawDatasetHandle = RawPolymarketHandle
+RawSnapshot = RawPolymarketSnapshot
 
 
 @dataclass
@@ -349,14 +537,15 @@ def _load_table_for_market_ids(
     table_name: str,
     market_ids: list[str],
     order_by: str,
+    chunk_size: int = 250,
 ) -> pd.DataFrame:
     market_ids = [str(market_id) for market_id in market_ids]
     if not market_ids:
         return pd.DataFrame()
 
     frames: list[pd.DataFrame] = []
-    for chunk_start in range(0, len(market_ids), 250):
-        chunk = market_ids[chunk_start : chunk_start + 250]
+    for chunk_start in range(0, len(market_ids), chunk_size):
+        chunk = market_ids[chunk_start : chunk_start + chunk_size]
         placeholders = ",".join(["?"] * len(chunk))
         query = f"""
         SELECT *

@@ -8,7 +8,16 @@ from polymarket_research.data.config import (
     MarketSelectionConfig,
     PanelBuildConfig,
 )
-from polymarket_research.data.raw.dataset import RawExternalCovariates, RawPolymarketDataset
+from polymarket_research.data.raw.dataset import (
+    RawDatasetBundle,
+    RawDatasetHandle,
+    RawExternalCovariates,
+    RawPolymarketBundle,
+    RawPolymarketHandle,
+    RawPolymarketDataset,
+    RawPolymarketSnapshot,
+    RawSnapshot,
+)
 
 __all__ = [
     "CanonicalDataset",
@@ -18,6 +27,12 @@ __all__ = [
     "ExternalShockConfig",
     "MarketSelectionConfig",
     "PanelBuildConfig",
+    "RawDatasetBundle",
+    "RawDatasetHandle",
     "RawExternalCovariates",
+    "RawPolymarketBundle",
+    "RawPolymarketHandle",
     "RawPolymarketDataset",
+    "RawPolymarketSnapshot",
+    "RawSnapshot",
 ]

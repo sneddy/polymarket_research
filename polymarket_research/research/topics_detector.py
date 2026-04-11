@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import time
 from typing import Iterable, Sequence
+import warnings
 
 from matplotlib.gridspec import GridSpec
 from matplotlib.lines import Line2D
@@ -164,8 +165,25 @@ class TopicModelResult:
             if UMAP is None:
                 raise RuntimeError("UMAP is not installed in the active environment.")
             n_neighbors = min(15, max(2, len(matrix) - 1))
-            reducer_model = UMAP(n_components=2, metric="cosine", random_state=random_state, n_neighbors=n_neighbors)
-            coords = reducer_model.fit_transform(matrix)
+            reducer_model = UMAP(
+                n_components=2,
+                metric="cosine",
+                random_state=random_state,
+                n_neighbors=n_neighbors,
+                init="random",
+            )
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"n_jobs value .* overridden .* random_state",
+                    category=UserWarning,
+                )
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"Spectral initialisation failed!.*",
+                    category=UserWarning,
+                )
+                coords = reducer_model.fit_transform(matrix)
         elif reducer_key in {"tsne", "t-sne"}:
             perplexity = min(30, max(2, len(matrix) // 4))
             perplexity = min(perplexity, len(matrix) - 1)
@@ -230,13 +248,23 @@ class TopicModelResult:
         alpha: float = 0.62,
         point_size_range: tuple[float, float] = (18.0, 90.0),
         table_position: str = "bottom",
+        show_table: bool = True,
+        legend_mode: str = "compact",
         max_label_words: int = 3,
+        legend_max_words: int = 4,
     ):
         """Plot one model with a compact topic-id legend and a topic mapping table."""
         projected = self.project_2d(reducer=reducer, random_state=random_state)
         topics = self.topic_summary().copy()
         topics["topic_short_label"] = topics["topic_terms"].map(
             lambda text: ", ".join(str(text).split(", ")[:max(1, int(max_label_words))])
+        )
+        topics["legend_label"] = topics.apply(
+            lambda row: (
+                f"T{int(row['topic_id'])} - [{', '.join(str(row['topic_terms']).split(', ')[:max(1, int(legend_max_words))])}] "
+                f"(size: {int(row['topic_size'])})"
+            ),
+            axis=1,
         )
 
         topic_ids = topics["topic_id"].tolist()
@@ -259,9 +287,15 @@ class TopicModelResult:
             projected["point_size"] = float(sum(point_size_range) / 2.0)
 
         table_position_key = str(table_position).strip().lower()
-        if table_position_key == "right":
+        if not show_table:
             fig = plt.figure(figsize=figsize)
-            gs = GridSpec(1, 3, figure=fig, width_ratios=[0.18, 0.57, 0.25])
+            gs = GridSpec(1, 2, figure=fig, width_ratios=[0.34, 0.66])
+            legend_ax = fig.add_subplot(gs[0, 0])
+            scatter_ax = fig.add_subplot(gs[0, 1])
+            table_ax = None
+        elif table_position_key == "right":
+            fig = plt.figure(figsize=figsize)
+            gs = GridSpec(1, 3, figure=fig, width_ratios=[0.18, 0.54, 0.28])
             legend_ax = fig.add_subplot(gs[0, 0])
             scatter_ax = fig.add_subplot(gs[0, 1])
             table_ax = fig.add_subplot(gs[0, 2])
@@ -290,33 +324,48 @@ class TopicModelResult:
                 [0],
                 marker="o",
                 color="none",
-                label=f"T{int(topic_id)}",
+                label=(
+                    f"T{int(topic_id)}"
+                    if str(legend_mode).strip().lower() == "compact"
+                    else str(topics.loc[topics["topic_id"].eq(int(topic_id)), "legend_label"].iloc[0])
+                ),
                 markerfacecolor=color_lookup[int(topic_id)],
                 markersize=8,
             )
             for topic_id in sorted(topic_ids)
         ]
-        legend_ax.legend(handles=handles, loc="center left", frameon=False, title="Topic Id")
+        legend_ax.legend(
+            handles=handles,
+            loc="upper left",
+            frameon=False,
+            title="Topic Id" if str(legend_mode).strip().lower() == "compact" else "Topics",
+            fontsize=9,
+            title_fontsize=10,
+            handletextpad=0.8,
+            labelspacing=0.8,
+            borderaxespad=0.0,
+        )
         legend_ax.axis("off")
 
-        table_rows = [
-            [
-                f"T{int(row.topic_id)}",
-                str(row.topic_short_label),
-                int(row.topic_size),
+        if table_ax is not None:
+            table_rows = [
+                [
+                    f"T{int(row.topic_id)}",
+                    str(row.topic_short_label),
+                    int(row.topic_size),
+                ]
+                for row in topics.itertuples(index=False)
             ]
-            for row in topics.itertuples(index=False)
-        ]
-        table = table_ax.table(
-            cellText=table_rows,
-            colLabels=["topic_id", "signature_words", "size"],
-            loc="center",
-            cellLoc="left",
-        )
-        table.auto_set_font_size(False)
-        table.set_fontsize(9)
-        table.scale(1.0, 1.2)
-        table_ax.axis("off")
+            table = table_ax.table(
+                cellText=table_rows,
+                colLabels=["topic_id", "signature_words", "size"],
+                loc="center",
+                cellLoc="left",
+            )
+            table.auto_set_font_size(False)
+            table.set_fontsize(9)
+            table.scale(1.0, 1.2)
+            table_ax.axis("off")
 
         fig.tight_layout()
         return fig, {"legend_ax": legend_ax, "scatter_ax": scatter_ax, "table_ax": table_ax}, projected

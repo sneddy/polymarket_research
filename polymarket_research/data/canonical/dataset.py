@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from polymarket_research.data.raw.dataset import RawExternalCovariates, RawPolymarketDataset
+from polymarket_research.data.raw.dataset import RawExternalCovariates, RawPolymarketBundle, RawPolymarketDataset
 from polymarket_research.utils.text import build_family_id
 
 
@@ -116,13 +116,13 @@ class CanonicalDataset:
 class CanonicalDatasetBuilder:
     """Build canonicalized tables from raw Polymarket sources."""
 
-    raw_dataset: RawPolymarketDataset
+    raw_dataset: RawPolymarketBundle | RawPolymarketDataset
     raw_external: RawExternalCovariates | None = None
     resolved_only: bool = True
 
     def build(self) -> CanonicalDataset:
         """Build the canonical dataset from the configured raw sources."""
-        if not self.raw_dataset.is_loaded:
+        if isinstance(self.raw_dataset, RawPolymarketDataset) and not self.raw_dataset.is_loaded:
             self.raw_dataset.load()
 
         raw_markets = self.raw_dataset.markets
@@ -145,7 +145,7 @@ class CanonicalDatasetBuilder:
         )
 
     @staticmethod
-    def build_download_status(raw_dataset: RawPolymarketDataset) -> pd.DataFrame:
+    def build_download_status(raw_dataset: RawPolymarketBundle | RawPolymarketDataset) -> pd.DataFrame:
         """Build a selected-market completeness table from raw export inputs."""
         selected_markets = raw_dataset.selected_markets
         if selected_markets is None or selected_markets.empty:
