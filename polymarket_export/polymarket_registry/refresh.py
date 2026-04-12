@@ -119,6 +119,7 @@ def refresh_market_universe(
     max_metadata_pages: int,
     page_limit: int = 200,
     include_active: bool = False,
+    preserve_existing: bool = False,
 ) -> pd.DataFrame:
     """Refresh the broad raw market universe without research-specific filtering."""
     logger.info(
@@ -138,9 +139,12 @@ def refresh_market_universe(
         ),
     )
     markets_collector = MarketsCollector(gamma)
-    deleted_rows = conn.execute("SELECT COUNT(*) FROM market_universe").fetchone()[0]
-    conn.execute("DELETE FROM market_universe")
-    logger.info("market universe cleared before refresh | deleted_rows=%s", deleted_rows)
+    existing_rows = conn.execute("SELECT COUNT(*) FROM market_universe").fetchone()[0]
+    if preserve_existing:
+        logger.info("market universe preserve_existing enabled | existing_rows=%s", existing_rows)
+    else:
+        conn.execute("DELETE FROM market_universe")
+        logger.info("market universe cleared before refresh | deleted_rows=%s", existing_rows)
     logger.info("registry stage started | stage=download_market_universe")
     report = markets_collector.download_market_meta(
         include_active=include_active,

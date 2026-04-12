@@ -54,6 +54,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Also include open/active markets; by default only closed markets are refreshed.",
     )
     p.add_argument(
+        "--preserve-existing",
+        action="store_true",
+        help="Preserve existing market_universe rows and upsert new rows instead of rebuilding the table from scratch.",
+    )
+    p.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -87,6 +92,7 @@ def main(argv: Sequence[str]) -> int:
             max_metadata_pages=args.max_metadata_pages,
             page_limit=args.page_limit,
             include_active=args.include_active,
+            preserve_existing=args.preserve_existing,
         )
         logger.info(
             "market metadata download finished | total_universe_rows=%s db=%s",

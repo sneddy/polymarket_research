@@ -623,3 +623,27 @@ counts = store.get_counts("cached_data/iran_conflict_orderbooks.sqlite")
 - No hidden daemons/background loops: collection runs only when called.
 - Most classes support endpoint/base URL overrides through config objects.
 - If progress bars do not render in notebooks, verify `tqdm` is installed and notebook widget support is enabled.
+
+## Frozen Artifacts Restore
+
+If you need the frozen research artifact snapshot, download the archive from:
+
+- [running_artefacts.zip](https://mbzuaiac-my.sharepoint.com/:u:/g/personal/anuar_aimoldin_mbzuai_ac_ae/IQAN7VHTXBvYR4mFV_6iP9vDAegwVOEUoExjMN7tD9UZ9ik?e=lLa4ma)
+
+Place the downloaded file at:
+
+```text
+~/Downloads/running_artefacts.zip
+```
+
+Then restore it into the repository with:
+
+```bash
+sh scripts/restore_frozen_running_artefacts_from_archive.sh
+```
+
+This unpacks the archive into:
+
+```text
+frozen_notebooks/running_artefacts
+```
