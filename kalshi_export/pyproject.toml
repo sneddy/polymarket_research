@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kalshi-export"
+version = "0.1.0"
+description = "Kalshi export and registry utilities."
+requires-python = ">=3.11"
+
+[tool.setuptools]
+include-package-data = false
+py-modules = ["config"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["clients*", "collectors*", "kalshi_registry*", "scripts*"]
