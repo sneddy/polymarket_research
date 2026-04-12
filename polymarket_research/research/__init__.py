@@ -5,4 +5,23 @@ helpers depend on unfinished benchmark code that is not part of the stable
 package surface.
 """
 
-__all__: list[str] = []
+from .question_decoupling import DecomposedQuestion, QuestionDecoupler
+from .topic_models import (
+    FASTopicFactory,
+    S3TopicFactory,
+    TFIDFTopicFactory,
+    TopicFactory,
+    TopicModel,
+    compare_topic_factories,
+)
+
+__all__ = [
+    "DecomposedQuestion",
+    "FASTopicFactory",
+    "QuestionDecoupler",
+    "S3TopicFactory",
+    "TFIDFTopicFactory",
+    "TopicFactory",
+    "TopicModel",
+    "compare_topic_factories",
+]

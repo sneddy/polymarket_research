@@ -1,4 +1,4 @@
-"""Topic-model comparison helpers for canonical Polymarket market text."""
+"""Topic-model factories and fitted topic models for canonical market text."""
 
 from __future__ import annotations
 
@@ -23,7 +23,6 @@ from turftopic.encoders.base import ExternalEncoder
 from umap import UMAP
 
 
-
 TEXT_MODE_ALIASES = {
     "question": "question",
     "full_description": "full_description",
@@ -35,7 +34,6 @@ TEXT_MODE_ALIASES = {
 
 
 def _softmax(matrix: np.ndarray) -> np.ndarray:
-    """Return a row-wise softmax for a score matrix."""
     shifted = matrix - matrix.max(axis=1, keepdims=True)
     exp = np.exp(shifted)
     denom = exp.sum(axis=1, keepdims=True)
@@ -44,7 +42,6 @@ def _softmax(matrix: np.ndarray) -> np.ndarray:
 
 
 def _normalize_topic_matrix(matrix: np.ndarray) -> np.ndarray:
-    """Convert a non-negative document-topic matrix into row-normalized scores."""
     clipped = np.clip(np.asarray(matrix, dtype=float), 0.0, None)
     row_sums = clipped.sum(axis=1, keepdims=True)
     row_sums[row_sums == 0.0] = 1.0
@@ -52,7 +49,6 @@ def _normalize_topic_matrix(matrix: np.ndarray) -> np.ndarray:
 
 
 def _join_text_columns(frame: pd.DataFrame, columns: Sequence[str]) -> pd.Series:
-    """Join a subset of text columns into one normalized text field."""
     present = [column for column in columns if column in frame.columns]
     if not present:
         return pd.Series("", index=frame.index, dtype="string")
@@ -69,7 +65,6 @@ def _join_text_columns(frame: pd.DataFrame, columns: Sequence[str]) -> pd.Series
 
 
 def build_topic_input_frame(markets: pd.DataFrame) -> pd.DataFrame:
-    """Attach canonical topic-model input text columns to a market frame."""
     out = markets.copy()
     if "full_description" not in out.columns:
         out["full_description"] = _join_text_columns(
@@ -91,7 +86,6 @@ def build_topic_input_frame(markets: pd.DataFrame) -> pd.DataFrame:
 
 
 def select_topic_text(markets: pd.DataFrame, text_mode: str = "full_description") -> pd.Series:
-    """Select one text view from the prepared market frame."""
     prepared = build_topic_input_frame(markets)
     canonical_mode = TEXT_MODE_ALIASES.get(str(text_mode).strip().lower(), str(text_mode).strip().lower())
     if canonical_mode not in prepared.columns:
@@ -119,8 +113,8 @@ class CachedSentenceTransformerEncoder(ExternalEncoder):
 
 
 @dataclass
-class TopicModelResult:
-    """Normalized outputs for one topic-model run."""
+class TopicModel:
+    """Fitted topic model artifact with inference helpers."""
 
     model_name: str
     text_mode: str
@@ -128,11 +122,10 @@ class TopicModelResult:
     topics: pd.DataFrame
     doc_topic_matrix: np.ndarray
     runtime_seconds: float
-    fitted_model: object | None = None
+    inference_backend: dict[str, object] | None = None
     _projection_cache: dict[str, pd.DataFrame] = field(default_factory=dict, repr=False)
 
     def representative_documents(self, top_n: int = 5) -> pd.DataFrame:
-        """Return top-confidence documents per topic."""
         rows: list[pd.DataFrame] = []
         for topic_id in self.topics["topic_id"].tolist():
             subset = (
@@ -146,11 +139,88 @@ class TopicModelResult:
         return pd.concat(rows, ignore_index=True)
 
     def topic_summary(self) -> pd.DataFrame:
-        """Return one row per topic with labels and sizes."""
         return self.topics.sort_values(["topic_size", "topic_id"], ascending=[False, True]).reset_index(drop=True)
 
+    def infer_topic_matrix(self, texts: pd.Series | Sequence[str]) -> np.ndarray:
+        if self.inference_backend is None:
+            raise RuntimeError("This TopicModel does not have an inference backend.")
+
+        if isinstance(texts, pd.Series):
+            ordered = texts.fillna("").astype(str).tolist()
+        else:
+            ordered = ["" if text is None else str(text) for text in texts]
+
+        backend_kind = self.inference_backend.get("kind")
+        if backend_kind == "turftopic":
+            backend_model = self.inference_backend["model"]
+            matrix = backend_model.transform(ordered)
+            return _normalize_topic_matrix(matrix)
+
+        if backend_kind == "tfidf_kmeans":
+            vectorizer = self.inference_backend["vectorizer"]
+            kmeans = self.inference_backend["kmeans"]
+            tfidf = vectorizer.transform(ordered)
+            similarity = cosine_similarity(tfidf, kmeans.cluster_centers_)
+            return _softmax(similarity)
+
+        raise ValueError(f"Unsupported inference backend kind={backend_kind!r}.")
+
+    def infer_texts(self, texts: pd.Series | Sequence[str]) -> pd.DataFrame:
+        if isinstance(texts, pd.Series):
+            index = texts.index
+            text_series = texts.fillna("").astype(str)
+        else:
+            values = ["" if text is None else str(text) for text in texts]
+            index = pd.RangeIndex(len(values))
+            text_series = pd.Series(values, index=index, dtype="string")
+
+        out = pd.DataFrame({"text_used": text_series}, index=index)
+        out["topic_id"] = pd.Series(pd.NA, index=index, dtype="Int64")
+        out["topic_confidence"] = np.nan
+        out["topic_label"] = pd.Series(pd.NA, index=index, dtype="string")
+        out["topic_terms"] = pd.Series(pd.NA, index=index, dtype="string")
+
+        non_empty_mask = text_series.str.strip().ne("")
+        if non_empty_mask.any():
+            matrix = self.infer_topic_matrix(text_series.loc[non_empty_mask])
+            inferred = self._documents_from_matrix(
+                pd.DataFrame(index=text_series.loc[non_empty_mask].index),
+                text_series.loc[non_empty_mask],
+                matrix,
+            )
+            for column in ["topic_id", "topic_confidence", "topic_label", "topic_terms"]:
+                out.loc[non_empty_mask, column] = inferred[column]
+
+        return out.reset_index(names="input_index")
+
+    def infer_descriptions(self, descriptions: pd.Series | Sequence[str]) -> pd.DataFrame:
+        """Infer topics for raw free-text descriptions."""
+        return self.infer_texts(descriptions)
+
+    def infer_markets(self, markets: pd.DataFrame) -> pd.DataFrame:
+        prepared = build_topic_input_frame(markets)
+        text = select_topic_text(prepared, self.text_mode)
+        out = prepared.copy()
+        out["text_used"] = text
+        out["topic_id"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+        out["topic_confidence"] = np.nan
+        out["topic_label"] = pd.Series(pd.NA, index=out.index, dtype="string")
+        out["topic_terms"] = pd.Series(pd.NA, index=out.index, dtype="string")
+
+        non_empty_mask = text.str.strip().ne("")
+        if non_empty_mask.any():
+            matrix = self.infer_topic_matrix(text.loc[non_empty_mask])
+            inferred = self._documents_from_matrix(
+                prepared.loc[non_empty_mask].copy(),
+                text.loc[non_empty_mask],
+                matrix,
+            )
+            for column in ["text_used", "topic_id", "topic_confidence", "topic_label", "topic_terms"]:
+                out.loc[non_empty_mask, column] = inferred[column]
+
+        return out
+
     def project_2d(self, reducer: str = "umap", *, random_state: int = 0) -> pd.DataFrame:
-        """Project document-topic scores into 2D for plotting."""
         reducer_key = str(reducer).strip().lower()
         if reducer_key in self._projection_cache:
             return self._projection_cache[reducer_key].copy()
@@ -206,7 +276,6 @@ class TopicModelResult:
         figsize: tuple[float, float] = (12.0, 9.0),
         alpha: float = 0.72,
     ):
-        """Plot the document cloud with topic-label annotations."""
         projected = self.project_2d(reducer=reducer, random_state=random_state)
         fig, ax = plt.subplots(figsize=figsize)
         sns.scatterplot(
@@ -253,7 +322,6 @@ class TopicModelResult:
         max_label_words: int = 3,
         legend_max_words: int = 4,
     ):
-        """Plot one model with a compact topic-id legend and a topic mapping table."""
         projected = self.project_2d(reducer=reducer, random_state=random_state)
         topics = self.topic_summary().copy()
         topics["topic_short_label"] = topics["topic_terms"].map(
@@ -349,11 +417,7 @@ class TopicModelResult:
 
         if table_ax is not None:
             table_rows = [
-                [
-                    f"T{int(row.topic_id)}",
-                    str(row.topic_short_label),
-                    int(row.topic_size),
-                ]
+                [f"T{int(row.topic_id)}", str(row.topic_short_label), int(row.topic_size)]
                 for row in topics.itertuples(index=False)
             ]
             table = table_ax.table(
@@ -370,10 +434,28 @@ class TopicModelResult:
         fig.tight_layout()
         return fig, {"legend_ax": legend_ax, "scatter_ax": scatter_ax, "table_ax": table_ax}, projected
 
+    def _documents_from_matrix(
+        self,
+        prepared_markets: pd.DataFrame,
+        text: pd.Series,
+        doc_topic_matrix: np.ndarray,
+    ) -> pd.DataFrame:
+        topic_id = doc_topic_matrix.argmax(axis=1).astype(int)
+        confidence = doc_topic_matrix.max(axis=1).astype(float)
+        out = prepared_markets.copy()
+        out["text_used"] = text
+        out["topic_id"] = topic_id
+        out["topic_confidence"] = confidence
+        topic_label = self.topics.set_index("topic_id")["topic_label"].to_dict()
+        topic_terms = self.topics.set_index("topic_id")["topic_terms"].to_dict()
+        out["topic_label"] = out["topic_id"].map(topic_label)
+        out["topic_terms"] = out["topic_id"].map(topic_terms)
+        return out
+
 
 @dataclass
-class BaseTopicsDetector:
-    """Common interface for topic-model wrappers."""
+class TopicFactory:
+    """Common config surface for topic-model factories."""
 
     n_topics: int = 12
     text_mode: str = "full_description"
@@ -387,7 +469,7 @@ class BaseTopicsDetector:
     def model_name(self) -> str:
         raise NotImplementedError
 
-    def fit_transform(self, markets: pd.DataFrame) -> TopicModelResult:
+    def fit(self, markets: pd.DataFrame) -> TopicModel:
         raise NotImplementedError
 
     def _prepare_markets(self, markets: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
@@ -437,8 +519,8 @@ class BaseTopicsDetector:
 
 
 @dataclass
-class S3TopicsDetector(BaseTopicsDetector):
-    """Semantic Signal Separation wrapper."""
+class S3TopicFactory(TopicFactory):
+    """Semantic Signal Separation topic factory."""
 
     encoder_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     encoder_device: str = "cpu"
@@ -450,7 +532,7 @@ class S3TopicsDetector(BaseTopicsDetector):
     def model_name(self) -> str:
         return "S3"
 
-    def fit_transform(self, markets: pd.DataFrame) -> TopicModelResult:
+    def fit(self, markets: pd.DataFrame) -> TopicModel:
         prepared_markets, text = self._prepare_markets(markets)
         if len(prepared_markets) < 3:
             raise ValueError("Need at least 3 non-empty documents for topic modeling.")
@@ -476,29 +558,22 @@ class S3TopicsDetector(BaseTopicsDetector):
         started = time.perf_counter()
         doc_topic = _normalize_topic_matrix(model.fit_transform(text.tolist()))
         runtime_seconds = time.perf_counter() - started
-        documents = self._document_frame(
-            prepared_markets,
-            text,
-            doc_topic,
-            topics=self._topic_rows_from_pairs(model.get_topics(), doc_topic.argmax(axis=1)),
-        )
-        topics = self._topic_rows_from_pairs(model.get_topics(), documents["topic_id"].to_numpy())
-        documents["topic_label"] = documents["topic_id"].map(topics.set_index("topic_id")["topic_label"])
-        documents["topic_terms"] = documents["topic_id"].map(topics.set_index("topic_id")["topic_terms"])
-        return TopicModelResult(
+        topics = self._topic_rows_from_pairs(model.get_topics(), doc_topic.argmax(axis=1))
+        documents = self._document_frame(prepared_markets, text, doc_topic, topics=topics)
+        return TopicModel(
             model_name=self.model_name,
             text_mode=self.text_mode,
             documents=documents,
             topics=topics,
             doc_topic_matrix=doc_topic,
             runtime_seconds=runtime_seconds,
-            fitted_model=model,
+            inference_backend={"kind": "turftopic", "model": model},
         )
 
 
 @dataclass
-class FASTopicDetector(BaseTopicsDetector):
-    """FASTopic wrapper."""
+class FASTopicFactory(TopicFactory):
+    """FASTopic topic factory."""
 
     encoder_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     encoder_device: str = "cpu"
@@ -514,7 +589,7 @@ class FASTopicDetector(BaseTopicsDetector):
     def model_name(self) -> str:
         return "FASTopic"
 
-    def fit_transform(self, markets: pd.DataFrame) -> TopicModelResult:
+    def fit(self, markets: pd.DataFrame) -> TopicModel:
         prepared_markets, text = self._prepare_markets(markets)
         if len(prepared_markets) < 3:
             raise ValueError("Need at least 3 non-empty documents for topic modeling.")
@@ -545,29 +620,22 @@ class FASTopicDetector(BaseTopicsDetector):
         started = time.perf_counter()
         doc_topic = _normalize_topic_matrix(model.fit_transform(text.tolist()))
         runtime_seconds = time.perf_counter() - started
-        documents = self._document_frame(
-            prepared_markets,
-            text,
-            doc_topic,
-            topics=self._topic_rows_from_pairs(model.get_topics(), doc_topic.argmax(axis=1)),
-        )
-        topics = self._topic_rows_from_pairs(model.get_topics(), documents["topic_id"].to_numpy())
-        documents["topic_label"] = documents["topic_id"].map(topics.set_index("topic_id")["topic_label"])
-        documents["topic_terms"] = documents["topic_id"].map(topics.set_index("topic_id")["topic_terms"])
-        return TopicModelResult(
+        topics = self._topic_rows_from_pairs(model.get_topics(), doc_topic.argmax(axis=1))
+        documents = self._document_frame(prepared_markets, text, doc_topic, topics=topics)
+        return TopicModel(
             model_name=self.model_name,
             text_mode=self.text_mode,
             documents=documents,
             topics=topics,
             doc_topic_matrix=doc_topic,
             runtime_seconds=runtime_seconds,
-            fitted_model=model,
+            inference_backend={"kind": "turftopic", "model": model},
         )
 
 
 @dataclass
-class TFIDFTopicBaseline(BaseTopicsDetector):
-    """Simple TF-IDF + KMeans baseline with signature words from cluster centroids."""
+class TFIDFTopicFactory(TopicFactory):
+    """TF-IDF + KMeans topic baseline."""
 
     ngram_range: tuple[int, int] = (1, 2)
     n_init: int | str = "auto"
@@ -576,7 +644,7 @@ class TFIDFTopicBaseline(BaseTopicsDetector):
     def model_name(self) -> str:
         return "TFIDF"
 
-    def fit_transform(self, markets: pd.DataFrame) -> TopicModelResult:
+    def fit(self, markets: pd.DataFrame) -> TopicModel:
         prepared_markets, text = self._prepare_markets(markets)
         if len(prepared_markets) < 3:
             raise ValueError("Need at least 3 non-empty documents for topic modeling.")
@@ -614,26 +682,25 @@ class TFIDFTopicBaseline(BaseTopicsDetector):
             )
         topics = pd.DataFrame(topic_rows).sort_values("topic_id").reset_index(drop=True)
         documents = self._document_frame(prepared_markets, text, doc_topic, topics=topics)
-        return TopicModelResult(
+        return TopicModel(
             model_name=self.model_name,
             text_mode=self.text_mode,
             documents=documents,
             topics=topics,
             doc_topic_matrix=doc_topic,
             runtime_seconds=runtime_seconds,
-            fitted_model={"vectorizer": vectorizer, "kmeans": kmeans},
+            inference_backend={"kind": "tfidf_kmeans", "vectorizer": vectorizer, "kmeans": kmeans},
         )
 
 
-def compare_topic_models(
+def compare_topic_factories(
     markets: pd.DataFrame,
-    detectors: Sequence[BaseTopicsDetector],
-) -> tuple[dict[str, TopicModelResult], pd.DataFrame]:
-    """Run multiple detectors on the same market frame and return their results plus a summary table."""
-    results: dict[str, TopicModelResult] = {}
+    factories: Sequence[TopicFactory],
+) -> tuple[dict[str, TopicModel], pd.DataFrame]:
+    results: dict[str, TopicModel] = {}
     rows: list[dict[str, object]] = []
-    for detector in detectors:
-        result = detector.fit_transform(markets)
+    for factory in factories:
+        result = factory.fit(markets)
         results[result.model_name] = result
         rows.append(
             {
@@ -649,13 +716,12 @@ def compare_topic_models(
 
 
 def plot_topic_model_grid(
-    results: Sequence[TopicModelResult],
+    results: Sequence[TopicModel],
     *,
     reducer: str = "umap",
     random_state: int = 0,
     figsize_per_plot: tuple[float, float] = (7.0, 5.5),
 ):
-    """Plot multiple topic-model clouds side by side."""
     n_results = len(results)
     fig, axes = plt.subplots(1, n_results, figsize=(figsize_per_plot[0] * n_results, figsize_per_plot[1]))
     if n_results == 1:
@@ -694,12 +760,13 @@ def plot_topic_model_grid(
 
 
 __all__ = [
-    "FASTopicDetector",
-    "S3TopicsDetector",
-    "TFIDFTopicBaseline",
-    "TopicModelResult",
+    "FASTopicFactory",
+    "S3TopicFactory",
+    "TFIDFTopicFactory",
+    "TopicFactory",
+    "TopicModel",
     "build_topic_input_frame",
-    "compare_topic_models",
+    "compare_topic_factories",
     "plot_topic_model_grid",
     "select_topic_text",
 ]
