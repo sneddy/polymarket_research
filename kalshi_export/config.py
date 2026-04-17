@@ -26,9 +26,10 @@ _load_simple_dotenv(Path(__file__).resolve().parents[1] / ".env")
 @dataclass(frozen=True)
 class HttpConfig:
     timeout_seconds: float = 30.0
-    max_retries: int = 5
-    backoff_base_seconds: float = 0.5
-    backoff_max_seconds: float = 30.0
+    max_retries: int = 6
+    backoff_base_seconds: float = 1.0
+    backoff_max_seconds: float = 60.0
+    series_pause_seconds: float = 0.2
     user_agent: str = "polymarket_research/0.1"
 
 
@@ -54,6 +55,7 @@ def load_http_config_from_env(prefix: str = "KALSHI_") -> HttpConfig:
         max_retries=_get_int("HTTP_MAX_RETRIES", HttpConfig.max_retries),
         backoff_base_seconds=_get_float("HTTP_BACKOFF_BASE_SECONDS", HttpConfig.backoff_base_seconds),
         backoff_max_seconds=_get_float("HTTP_BACKOFF_MAX_SECONDS", HttpConfig.backoff_max_seconds),
+        series_pause_seconds=_get_float("HTTP_SERIES_PAUSE_SECONDS", HttpConfig.series_pause_seconds),
         user_agent=user_agent,
     )
 

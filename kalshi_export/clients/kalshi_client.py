@@ -59,6 +59,12 @@ class KalshiClient:
             q["cursor"] = cursor
         return self._get_json("events", params=q)
 
+    def get_series(self, *, limit: int = 200, cursor: str | None = None, **params: Any) -> Any:
+        q = {"limit": int(limit), **params}
+        if cursor:
+            q["cursor"] = cursor
+        return self._get_json("series", params=q)
+
     def get_event(self, event_ticker: str, *, with_nested_markets: bool = False, **params: Any) -> Any:
         q = {"with_nested_markets": str(with_nested_markets).lower(), **params}
         return self._get_json(f"events/{event_ticker}", params=q)
@@ -75,6 +81,42 @@ class KalshiClient:
             q["cursor"] = cursor
         return self._get_json("historical/markets", params=q)
 
+    def get_historical_cutoff(self) -> Any:
+        return self._get_json("historical/cutoff", params={})
+
+    def get_market_candlesticks(
+        self,
+        *,
+        series_ticker: str,
+        ticker: str,
+        start_ts: int,
+        end_ts: int,
+        period_interval: int = 1,
+        include_latest_before_start: bool = False,
+    ) -> Any:
+        q = {
+            "start_ts": int(start_ts),
+            "end_ts": int(end_ts),
+            "period_interval": int(period_interval),
+            "include_latest_before_start": str(bool(include_latest_before_start)).lower(),
+        }
+        return self._get_json(f"series/{series_ticker}/markets/{ticker}/candlesticks", params=q)
+
+    def get_historical_market_candlesticks(
+        self,
+        *,
+        ticker: str,
+        start_ts: int,
+        end_ts: int,
+        period_interval: int = 1,
+    ) -> Any:
+        q = {
+            "start_ts": int(start_ts),
+            "end_ts": int(end_ts),
+            "period_interval": int(period_interval),
+        }
+        return self._get_json(f"historical/markets/{ticker}/candlesticks", params=q)
+
     def iter_events(
         self,
         *,
@@ -89,6 +131,21 @@ class KalshiClient:
             limit=limit,
             max_pages=max_pages,
             with_nested_markets=str(with_nested_markets).lower(),
+            **params,
+        )
+
+    def iter_series(
+        self,
+        *,
+        limit: int = 200,
+        max_pages: int | None = None,
+        **params: Any,
+    ) -> Iterable[dict[str, Any]]:
+        yield from self._iter_cursor_pages(
+            "series",
+            list_key="series",
+            limit=limit,
+            max_pages=max_pages,
             **params,
         )
 

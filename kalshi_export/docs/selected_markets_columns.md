@@ -22,6 +22,7 @@ This table is the curated research-facing registry built from `market_universe`.
 | `created_at` | Market creation timestamp | Needed for temporal ordering and cutoffs |
 | `open_time` | Market open timestamp | Useful for lifecycle analysis |
 | `close_time` | Venue close timestamp | Useful for lifecycle analysis and diagnostics |
+| `settlement_ts` | Venue settlement timestamp when present | Useful for history routing and resolved-market coverage |
 | `end_date` | Normalized market end timestamp | Main downstream lifecycle end field |
 | `status` | Venue market status | Useful for diagnostics and lifecycle filtering |
 | `market_type` | Venue market type | Used to retain only compatible markets, usually `binary` |
@@ -42,9 +43,14 @@ This table is the curated research-facing registry built from `market_universe`.
 | `rules_secondary` | Secondary rules text | Useful for detailed interpretation and edge cases |
 | `selection_reason` | Human-readable or coded reason the market was admitted | Useful for auditability and debugging the selection pipeline |
 | `selection_version` | Local selection-protocol version string | Useful when selection logic changes over time |
+| `history_start_utc` | Precomputed history start bound | Keeps `get_history` lightweight and deterministic |
+| `history_end_utc` | Precomputed history end bound | Keeps `get_history` lightweight and deterministic |
+| `history_ready` | Whether the row has the minimum keys required for history download | Lets `get_history` read a self-contained operational queue |
 | `synced_at_utc` | Local ingestion / registry build timestamp | Useful for freshness checks and ingestion audit |
 
 Notes:
 
 - `primary_domain` should be a local derived field, not a direct copy of `kalshi_category`.
 - `kalshi_category` should be preserved as raw source metadata even if it is not used directly by downstream research.
+- `history_start_utc` should default to `COALESCE(open_time, created_at)`.
+- `history_end_utc` should default to `COALESCE(settlement_ts, close_time, end_date)`.

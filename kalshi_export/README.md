@@ -1,90 +1,228 @@
 # Kalshi Export
 
-This directory contains the Kalshi ingestion/export scaffold.
+This directory now follows a series-first Kalshi pipeline.
 
-The current end-to-end flow is:
+Current implemented stages:
 
-1. `download_market_meta` -> build `raw_markets`
-2. `market_selection` -> build `selected_markets`
-3. `enrichment` -> fetch `event_metadata` and materialize `market_universe`
-4. `get_history` -> reserved candlesticks-first history stage
+1. `download_series_meta` -> build `raw_series`
+2. `series_selection` -> build `selected_series`
+3. `download_market_meta` -> build `raw_markets` for `selected_series` from live, historical, or both
+4. `market_selection` -> build `selected_markets`
+5. `get_history` -> build `minute_candles`, `probabilities`, and `added_markets`
 
-## 1. Metadata Index
+Planned later stages:
 
-Raw market base from `GET /markets`:
+6. `enrichment`
+
+## Clean Rerun From Scratch
+
+If you want to fully rebuild the Kalshi pipeline from an empty database:
 
 ```bash
-python -m scripts.download_market_meta \
+cd /Users/sneddy/research/polymarket_research
+rm -f db/kalshi_probability_dataset.sqlite
+```
+
+Then run the four implemented stages in order:
+
+```bash
+cd /Users/sneddy/research/polymarket_research/kalshi_export
+
+conda run -n polymarket python -m scripts.download_series_meta \
+  --db-path ../db/kalshi_probability_dataset.sqlite \
+  --log-dir ../logs \
+  --force-remove
+
+conda run -n polymarket python -m scripts.series_selection \
+  --db-path ../db/kalshi_probability_dataset.sqlite \
+  --log-dir ../logs \
+  --force-remove
+
+conda run -n polymarket python -m scripts.download_market_meta \
+  --db-path ../db/kalshi_probability_dataset.sqlite \
+  --log-dir ../logs \
+  --source-mode both \
+  --force-remove
+
+conda run -n polymarket python -m scripts.market_selection \
+  --db-path ../db/kalshi_probability_dataset.sqlite \
+  --log-dir ../logs \
+  --min-volume 20000 \
+  --force-remove
+
+conda run -n polymarket python -m scripts.get_history \
   --db-path ../db/kalshi_probability_dataset.sqlite \
   --log-dir ../logs
 ```
 
-Live index, narrowed by close date:
+## 1. Download Series Metadata
 
 ```bash
-python -m scripts.download_market_meta \
+cd /Users/sneddy/research/polymarket_research/kalshi_export
+
+conda run -n polymarket python -m scripts.download_series_meta \
   --db-path ../db/kalshi_probability_dataset.sqlite \
   --log-dir ../logs \
-  --min-close-date 2026-01-01
+  --force-remove
 ```
 
-Historical raw market base from `GET /historical/markets`:
+This populates `raw_series` from `GET /series`.
+
+## 2. Select Series
 
 ```bash
-python -m scripts.download_market_meta \
+conda run -n polymarket python -m scripts.series_selection \
   --db-path ../db/kalshi_probability_dataset.sqlite \
   --log-dir ../logs \
-  --historical
+  --force-remove
 ```
 
-Notes:
+This populates `selected_series` from `raw_series`.
 
-- `--historical` switches the source endpoint to `GET /historical/markets`.
-- By default the loader preserves existing `raw_markets` rows and upserts new ones. Use `--force-remove` only when you explicitly want a clean rebuild.
-- SQLite writes happen incrementally during indexing. Use `--write-batch-pages` to control how often buffered pages are upserted.
+Current logic first drops series with:
 
-## 2. Selection
+- `frequency = fifteen_min`
+- `frequency = hourly`
+- `frequency = daily`
 
-Current selection is intentionally simple and uses only one criterion:
+Then it keeps only:
+
+- `Entertainment`
+- `Elections`
+- `Politics`
+- `Economics`
+- `Companies`
+- `Financials`
+- `Science and Technology`
+- `World`
+- `Health`
+- `Social`
+
+Then it drops additional short-term junk by simple `title` / `subtitle` deny patterns.
+
+## 3. Download Market Metadata
 
 ```bash
-python -m scripts.market_selection \
+conda run -n polymarket python -m scripts.download_market_meta \
   --db-path ../db/kalshi_probability_dataset.sqlite \
   --log-dir ../logs \
-  --min-volume 20000
+  --force-remove
 ```
 
-This builds `selected_markets` from `raw_markets`.
+This stage:
 
-## 3. Enrichment
+- reads `selected_series`
+- calls `GET /markets?series_ticker=...` in `--source-mode live`
+- calls `GET /historical/markets?series_ticker=...` in `--source-mode historical`
+- can run both branches in one command with `--source-mode both`
+- excludes MVE markets by default
+- upserts market rows into `raw_markets`
 
-Event enrichment is a separate stage:
+Optional knobs:
+
+- `--source-mode live|historical|both`
+- `--status` for live `/markets`
+- `--min-close-date YYYY-MM-DD` for live `/markets`
+- `--max-close-date YYYY-MM-DD` for live `/markets`
+- `--max-pages-per-series`
+- `--include-mve`
+
+Examples:
+
+Live only:
 
 ```bash
-python -m scripts.enrichment \
+conda run -n polymarket python -m scripts.download_market_meta \
+  --db-path ../db/kalshi_probability_dataset.sqlite \
+  --log-dir ../logs \
+  --source-mode live \
+  --force-remove
+```
+
+Historical only, appended into existing `raw_markets`:
+
+```bash
+conda run -n polymarket python -m scripts.download_market_meta \
+  --db-path ../db/kalshi_probability_dataset.sqlite \
+  --log-dir ../logs \
+  --source-mode historical
+```
+
+Both in one run:
+
+```bash
+conda run -n polymarket python -m scripts.download_market_meta \
+  --db-path ../db/kalshi_probability_dataset.sqlite \
+  --log-dir ../logs \
+  --source-mode both \
+  --force-remove
+```
+
+## 4. Select Markets
+
+```bash
+conda run -n polymarket python -m scripts.market_selection \
+  --db-path ../db/kalshi_probability_dataset.sqlite \
+  --log-dir ../logs \
+  --min-volume 20000 \
+  --force-remove
+```
+
+This stage:
+
+- reads `raw_markets`
+- keeps only `market_type = binary`
+- keeps only markets with `volume_num >= 20000`
+- writes the result into `selected_markets`
+- precomputes:
+  - `history_start_utc = COALESCE(open_time, created_at)`
+  - `history_end_utc = COALESCE(settlement_ts, close_time, end_date)`
+  - `history_ready`
+
+The goal is to make `selected_markets` a self-contained operational queue for the future `get_history` stage.
+
+## 5. Download History
+
+```bash
+conda run -n polymarket python -m scripts.get_history \
   --db-path ../db/kalshi_probability_dataset.sqlite \
   --log-dir ../logs
 ```
 
 This stage:
 
-- fetches missing event rows into `event_metadata`
-- updates `selected_markets` with event-level columns
-- materializes an enriched `market_universe` for the selected subset
+- reads `selected_markets` where `history_ready = 1`
+- skips markets already present in `added_markets`
+- fetches the live/historical cutoff once at run start
+- downloads 1-minute candle history into `minute_candles`
+- resamples those candles to 5-minute rows in `probabilities`
+- writes one manifest row per market into `added_markets`
 
-## 4. History
+Useful knobs:
 
-The history stage is scaffolded but not yet implemented:
+- `--max-markets`
+- `--chunk-days`
+- `--force-refresh`
 
-```bash
-python -m scripts.get_history \
-  --db-path ../db/kalshi_probability_dataset.sqlite \
-  --log-dir ../logs
-```
+## Current Tables
 
-Planned behavior:
+- `raw_series`
+- `selected_series`
+- `raw_markets`
+- `selected_markets`
+- `minute_candles`
+- `probabilities`
+- `added_markets`
 
-- read `selected_markets`
-- download 1-minute candles
-- build 5-minute `probabilities`
-- optionally save `raw_trades`
+Reference docs:
+
+- [raw_series_columns.md](/Users/sneddy/research/polymarket_research/kalshi_export/docs/raw_series_columns.md)
+- [selected_series_columns.md](/Users/sneddy/research/polymarket_research/kalshi_export/docs/selected_series_columns.md)
+- [raw_markets_columns.md](/Users/sneddy/research/polymarket_research/kalshi_export/docs/raw_markets_columns.md)
+- [minute_candles_columns.md](/Users/sneddy/research/polymarket_research/kalshi_export/docs/minute_candles_columns.md)
+
+Future tables will be populated in later stages:
+
+- `event_metadata`
+- `market_universe`
+- `raw_trades`

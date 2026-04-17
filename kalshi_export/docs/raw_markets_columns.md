@@ -2,7 +2,8 @@
 
 The table below describes the intended `raw_markets` columns for `kalshi_export`.
 
-This table is the first raw market base built from either `GET /markets` or `GET /historical/markets`.
+This table is the raw market base built from market endpoints after series-level narrowing.
+The current implemented stage populates it from live `GET /markets?series_ticker=...`; historical `GET /historical/markets?series_ticker=...` is planned later.
 It is no longer treated as a lightweight index. Instead, it should be treated as the venue-native market-level base table used by selection and later enrichment.
 
 | column | meaning | reason |
@@ -73,4 +74,5 @@ It is no longer treated as a lightweight index. Instead, it should be treated as
 Notes:
 
 - `raw_markets` is intentionally market-centric and should be treated as the raw market base layer.
-- Richer event-level fields such as `kalshi_category`, `series_ticker`, and `mutually_exclusive` should be added later through targeted enrichment keyed by `event_ticker`.
+- Richer event-level fields such as event titles and mutually-exclusive structure should be added later through targeted enrichment keyed by `event_ticker`.
+- `raw_markets` is intentionally downstream of `selected_series`, so it should contain only the benchmark-oriented series universe rather than the full Kalshi market universe.

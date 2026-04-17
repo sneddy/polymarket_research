@@ -21,6 +21,7 @@ _RAW_MARKETS_COLUMNS = [
     "venue_market_id",
     "event_id",
     "venue_event_id",
+    "series_ticker",
     "ticker",
     "event_ticker",
     "title",
