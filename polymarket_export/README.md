@@ -81,7 +81,7 @@ The default selection protocol is:
 - sports and esports markets
 - final resolved-volume screen with default `--min-resolved-volume 20000`
 
-Tag enrichment is now optional and disabled by default. Enable it only if you explicitly want legacy tag/domain metadata:
+Tag enrichment is now optional and disabled by default. Enable it only if you explicitly want extra Gamma-derived domain labels attached to the selected registry:
 
 ```bash
 python -m scripts.market_selection \
@@ -177,6 +177,7 @@ python -m scripts.poll_orderbooks \
 - `scripts.inspect_market_meta` is a raw inspector/export utility for market-universe metadata and ranking stats; it does not touch SQLite.
 - `scripts.download_market_meta` only updates `market_universe`; it is no longer responsible for research filtering.
 - `scripts.market_selection` is the explicit bridge from `market_universe` to the filtered `selected_markets` registry used by history downloads.
+- `scripts.market_selection` no longer stores a category subset; it rebuilds the full selected registry in one pass.
 - `scripts.get_history` now reads the whole `selected_markets` table; it no longer takes `--category`.
 - Current working tables are `market_universe`, `selected_markets`, `added_markets`, `probabilities`, and `raw_trades`.
 - This export root is intentionally kept close to the old layout to minimize churn.

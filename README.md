@@ -8,7 +8,7 @@ At a high level, the repository supports:
 - downloading full historical trades and converting them to 5-minute `yes_probability` panels
 - recording or polling order books for active markets
 - collecting external covariates such as `BTC/ETH`, oil, rates, and FX
-- running benchmark tasks for forecasting, trustworthiness, and repricing
+- running benchmark tasks for forecasting, decisiveness, and repricing
 
 The codebase is organized around one principle:
 
@@ -16,7 +16,7 @@ The codebase is organized around one principle:
 - `collectors/` normalize and assemble source-specific data
 - `scripts/` are job-style entrypoints / runnable pipeline commands
 - `examples/` are demo notebooks only
-- `benchmarks/` contains benchmark construction and evaluation code
+- `polymarket_research/benchmarks/` contains benchmark construction and evaluation code
 
 ## Quick Start
 
@@ -55,8 +55,8 @@ If you only plan to run export scripts under `polymarket_export/`, the second co
   CLI entrypoints for dataset-building jobs.
 - `examples/`
   Demo notebooks only.
-- `benchmarks/`
-  Benchmark datasets, notebook analyses, runner, and exported results.
+- `polymarket_research/benchmarks/`
+  Benchmark classes plus shared dataset/covariate utilities used by notebooks.
 
 ### Main script entrypoints
 
@@ -85,9 +85,9 @@ For most research tasks in this repository, the intended pipeline is:
 
 1. download the broad market-universe metadata
 2. build the filtered market registry for history download
-3. download 5-minute Polymarket histories for one or more research domains
+3. rebuild the filtered registry from the saved market universe
 4. optionally download external covariates
-5. run benchmarks / experiments on top of the resulting datasets
+5. build canonical research datasets and benchmark artefacts on top of the resulting SQLite files
 
 ### What gets created
 
@@ -99,8 +99,8 @@ Main tables:
 
 - `market_universe`
   Broad Polymarket metadata universe from the listing endpoint
-- `markets`
-  Filtered market registry used by the legacy history pipeline
+- `selected_markets`
+  Filtered market registry used by the current history pipeline
 - `added_markets`
   Markets whose history has already been downloaded
 - `probabilities`
@@ -114,10 +114,6 @@ Main tables:
 
 - parquet datasets such as `cached_data/external_events/`
 
-`benchmarks/run_benchmarks.py` writes:
-
-- `benchmarks/results/<domain>/`
-
 ## Reproducible Shell Runs
 
 The following commands reflect the main end-to-end jobs currently used in this repository.
@@ -127,15 +123,14 @@ The following commands reflect the main end-to-end jobs currently used in this r
 | Goal | Run | Main output |
 | --- | --- | --- |
 | Refresh the broad market universe | `python -m scripts.download_market_meta --db-path db/resolved_probability_dataset.sqlite ...` | `market_universe` table in `db/resolved_probability_dataset.sqlite` |
-| Build the filtered market registry | `python -m scripts.market_selection --db-path db/resolved_probability_dataset.sqlite ...` | `markets` table in `db/resolved_probability_dataset.sqlite` |
-| Download 5-minute Polymarket panels for one domain | `python -m scripts.get_history --category <domain> --db-path db/resolved_probability_dataset.sqlite` | `added_markets` and `probabilities` tables in `db/resolved_probability_dataset.sqlite` |
+| Build the filtered market registry | `python -m scripts.market_selection --db-path db/resolved_probability_dataset.sqlite ...` | `selected_markets` table in `db/resolved_probability_dataset.sqlite` |
+| Download 5-minute Polymarket panels for the selected registry | `python -m scripts.get_history --db-path db/resolved_probability_dataset.sqlite` | `added_markets` and `probabilities` tables in `db/resolved_probability_dataset.sqlite` |
 | Download full historical trades for one market | `python -m scripts.download_trades --market-id ... --out cached_data/trades.parquet` | `cached_data/trades.parquet` |
 | Inspect/download market-universe metadata | `python -m scripts.inspect_market_meta ...` | parquet/JSON exports of market metadata and rankings |
 | Record live websocket order-book updates | `python -m scripts.record_orderbook ... --out cached_data/orderbook.parquet` | `cached_data/orderbook.parquet` |
 | Poll REST order-book snapshots into SQLite | `python -m scripts.poll_orderbooks ... --db cached_data/orderbooks.sqlite` | SQLite order-book snapshot database |
 | Download external covariates | `python -m scripts.download_external_covariates ... --out cached_data/external_covariates` | parquet dataset under `cached_data/external_covariates` |
 | Download benchmark-window EDGAR events | `python scripts/get_events.py` | parquet dataset under `cached_data/external_events` |
-| Run benchmark suite | `python benchmarks/run_benchmarks.py --domain <domain>` | `benchmarks/results/<domain>/` |
 
 ### 1) Download the broad market-universe metadata
 
@@ -158,27 +153,15 @@ python -m scripts.market_selection \
   --min-created-at 2025-01-01T00:00:00Z
 ```
 
-### 3) Download 5-minute Polymarket histories for `geopolitics`
+### 3) Download 5-minute Polymarket histories
 
 ```bash
 conda activate polymarket
 python -m scripts.get_history \
-  --category geopolitics \
   --db-path db/resolved_probability_dataset.sqlite
 ```
 
-### 4) Download 5-minute Polymarket histories for `finance_economy`
-
-```bash
-conda activate polymarket
-python -m scripts.get_history \
-  --category finance_economy \
-  --db-path db/resolved_probability_dataset.sqlite
-```
-
-### 5) Download external covariates
-
-Crypto (`BTC/ETH`) uses Binance archive backfill by default. Non-crypto default series use FRED daily data. SEC EDGAR filing-count series are available as opt-in daily covariates.
+### 4) Download external covariates
 
 ```bash
 conda activate polymarket
@@ -228,35 +211,15 @@ Key behavior:
 - shows progress bars by default for both the outer series loop and the inner SEC daily download loop
 - supports `--no-progress` to disable progress bars
 
-### 5) Run the benchmark suite
-
-```bash
-conda activate polymarket
-python benchmarks/run_benchmarks.py --domain geopolitics
-```
-
-Results are exported to:
-
-```text
-benchmarks/results/geopolitics/
-```
-
 ## Benchmarks
 
-The benchmark package lives in [benchmarks/README.md](/Users/sneddy/research/polymarket_research/benchmarks/README.md).
+The maintained benchmark workflow now lives in the `polymarket_research` package plus the frozen notebooks:
 
-Current benchmark tasks:
+- [frozen_notebooks/3_terminal_benchmark.ipynb](/Users/sneddy/research/polymarket_research/frozen_notebooks/3_terminal_benchmark.ipynb)
+- [frozen_notebooks/4_decisiveness_benchmark.ipynb](/Users/sneddy/research/polymarket_research/frozen_notebooks/4_decisiveness_benchmark.ipynb)
+- [frozen_notebooks/5_repricing_benchmark.ipynb](/Users/sneddy/research/polymarket_research/frozen_notebooks/5_repricing_benchmark.ipynb)
 
-- multi-horizon terminal forecasting
-- trustworthiness / selective prediction
-- large repricing prediction
-
-Reproducible benchmark run:
-
-```bash
-conda activate polymarket
-python benchmarks/run_benchmarks.py --domain geopolitics
-```
+These artefacts operate on the canonical research layer and do not assume removed legacy domain slices.
 
 ## External Covariates
 
@@ -287,7 +250,6 @@ Representative notebooks:
 - `examples/btc_eth_covariates_demo.ipynb`
 - `examples/download_trades.ipynb`
 - `examples/record_orderbook.ipynb`
-- `examples/resolved_market_probability_panel_demo.ipynb`
 - `examples/lob_lookup.ipynb`
 - `examples/structural_break.ipynb`
 

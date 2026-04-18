@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import sqlite3
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -245,6 +246,8 @@ def _download_candles_for_source(
             if pbar is not None:
                 pbar.update(1)
                 pbar.set_postfix({"rows": sum(len(frame) for frame in frames), "chunk": chunk_idx})
+            if kalshi._http.candle_pause_seconds > 0 and chunk_idx < len(chunks):
+                time.sleep(kalshi._http.candle_pause_seconds)
     finally:
         if pbar is not None:
             pbar.close()
@@ -368,13 +371,16 @@ def store_market_history(
     history_source_mode: str,
     cutoff_ts_used: str,
     warnings: list[str],
+    store_candles: bool,
 ) -> dict[str, Any]:
     market_id = str(market_row["market_id"])
     with conn:
         conn.execute("DELETE FROM minute_candles WHERE market_id = ?", (market_id,))
         conn.execute("DELETE FROM probabilities WHERE market_id = ?", (market_id,))
 
-    minute_rows = upsert_minute_candles(conn, minute_df[_MINUTE_CANDLE_COLUMNS].copy()) if not minute_df.empty else 0
+    minute_rows = int(len(minute_df))
+    if store_candles and not minute_df.empty:
+        upsert_minute_candles(conn, minute_df[_MINUTE_CANDLE_COLUMNS].copy())
     probability_rows = upsert_probabilities(conn, probability_df[_PROBABILITY_COLUMNS].copy()) if not probability_df.empty else 0
 
     added_at_utc = pd.Timestamp.utcnow().tz_localize(None).strftime("%Y-%m-%dT%H:%M:%SZ")

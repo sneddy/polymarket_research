@@ -13,8 +13,6 @@ from typing import Sequence
 import pandas as pd
 import numpy as np
 
-from configs.resolved_dataset_domain_config import DOMAIN_PRIORITY
-
 
 def json_text(value: Sequence[str] | None) -> str:
     """Serialize a small list as stable JSON text."""
@@ -315,13 +313,11 @@ def upsert_market_universe(conn: sqlite3.Connection, markets_df: pd.DataFrame) -
     return len(rows_to_write)
 
 
-def upsert_markets(conn: sqlite3.Connection, category: str, candidate_df: pd.DataFrame) -> int:
-    """Upsert filtered markets for a single research category."""
+def upsert_selected_markets(conn: sqlite3.Connection, candidate_df: pd.DataFrame) -> int:
+    """Upsert the full selected_markets registry."""
     now_utc = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows_to_write = []
     for _, row in candidate_df.iterrows():
-        if row.get("primary_domain") != category:
-            continue
         rows_to_write.append(
             (
                 str(row["id"]),
@@ -361,7 +357,7 @@ def upsert_markets(conn: sqlite3.Connection, category: str, candidate_df: pd.Dat
                 json_text(row.get("tag_labels")),
                 json_text(row.get("matched_tags")),
                 json_text(row.get("matched_domains")),
-                str(row["primary_domain"]),
+                str(row.get("primary_domain") or "unassigned"),
                 now_utc,
             )
         )
@@ -457,97 +453,13 @@ def upsert_markets(conn: sqlite3.Connection, category: str, candidate_df: pd.Dat
     return len(rows_to_write)
 
 
-def upsert_markets_for_categories(
-    conn: sqlite3.Connection,
-    candidate_df: pd.DataFrame,
-    *,
-    categories: Sequence[str] | None = None,
-) -> dict[str, int]:
-    """Upsert filtered markets for multiple research categories."""
-    category_list = list(categories) if categories is not None else list(DOMAIN_PRIORITY)
-    out: dict[str, int] = {}
-    for category in category_list:
-        out[category] = upsert_markets(conn, category, candidate_df)
-    return out
-
-
-def replace_markets_for_categories(
-    conn: sqlite3.Connection,
-    candidate_df: pd.DataFrame,
-    *,
-    categories: Sequence[str] | None = None,
-) -> dict[str, int]:
-    """Replace filtered markets for the requested categories with a fresh selection."""
-    category_list = list(categories) if categories is not None else list(DOMAIN_PRIORITY)
-    if category_list:
-        placeholders = ",".join("?" for _ in category_list)
-        market_scope_sql = f"SELECT market_id FROM selected_markets WHERE primary_domain IN ({placeholders})"
-        conn.execute(
-            f"DELETE FROM probabilities WHERE market_id IN ({market_scope_sql})",
-            tuple(category_list),
-        )
-        conn.execute(
-            f"DELETE FROM added_markets WHERE market_id IN ({market_scope_sql})",
-            tuple(category_list),
-        )
-        conn.execute(
-            f"DELETE FROM selected_markets WHERE primary_domain IN ({placeholders})",
-            tuple(category_list),
-        )
-    return upsert_markets_for_categories(conn, candidate_df, categories=category_list)
-
-
-def load_markets_for_category(conn: sqlite3.Connection, category: str) -> pd.DataFrame:
-    """Load the filtered market registry for a single research category."""
-    return pd.read_sql_query(
-        """
-        SELECT
-            market_id,
-            condition_id,
-            market_slug,
-            event_id,
-            event_slug,
-            event_title,
-            event_series_slug,
-            event_description,
-            event_start_time,
-            event_score,
-            event_period,
-            event_series_id,
-            event_recurrence,
-            event_series_type,
-            question,
-            description,
-            resolution_source,
-            created_at,
-            end_date,
-            active,
-            closed,
-            archived,
-            volume_num,
-            liquidity_num,
-            outcomes,
-            outcome_prices,
-            clob_token_ids,
-            closed_time,
-            uma_resolution_status,
-            neg_risk,
-            neg_risk_market_id,
-            group_item_title,
-            final_outcome,
-            final_yes_probability,
-            tag_labels,
-            matched_tags,
-            matched_domains,
-            primary_domain,
-            synced_at_utc
-        FROM selected_markets
-        WHERE primary_domain = ?
-        ORDER BY volume_num DESC, created_at DESC
-        """,
-        conn,
-        params=(category,),
-    )
+def replace_selected_markets(conn: sqlite3.Connection, candidate_df: pd.DataFrame) -> int:
+    """Replace the full selected_markets registry with a fresh selection."""
+    conn.execute("DELETE FROM raw_trades")
+    conn.execute("DELETE FROM probabilities")
+    conn.execute("DELETE FROM added_markets")
+    conn.execute("DELETE FROM selected_markets")
+    return upsert_selected_markets(conn, candidate_df)
 
 
 def load_all_markets(conn: sqlite3.Connection) -> pd.DataFrame:

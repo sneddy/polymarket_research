@@ -13,9 +13,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from clients.gamma_client import GammaClient
-from configs.resolved_dataset_domain_config import DOMAIN_PRIORITY
 from polymarket_registry.block_filters import DEFAULT_MIN_RESIDUAL_VOLUME
-from polymarket_registry.refresh import select_market_registry_from_universe_all_categories
+from polymarket_registry.refresh import select_market_registry_from_universe
 from polymarket_registry.schema import ensure_schema
 from scripts.common import DEFAULT_DB_PATH
 from scripts.common import DEFAULT_LOG_DIR
@@ -46,18 +45,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Minimum cumulative market volume for the final residual volume screen.",
     )
     p.add_argument(
-        "--categories",
-        nargs="*",
-        choices=DOMAIN_PRIORITY,
-        default=list(DOMAIN_PRIORITY),
-        help="Optional subset of research categories to store when tag enrichment is enabled.",
-    )
-    p.add_argument(
         "--tag_enrichment",
         "--tag-enrichment",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Whether to enrich selected markets with Gamma tags and keep domain categories. Default: false.",
+        help="Whether to enrich selected markets with Gamma tags metadata. Default: false.",
     )
     p.add_argument(
         "--log-level",
@@ -93,12 +85,11 @@ def main(argv: Sequence[str]) -> int:
     gamma = GammaClient() if args.tag_enrichment else None
     with sqlite3.connect(db_path) as conn:
         ensure_schema(conn)
-        selected_df = select_market_registry_from_universe_all_categories(
+        selected_df = select_market_registry_from_universe(
             conn,
             gamma=gamma,
             min_created_at=args.min_created_at,
             min_resolved_volume=args.min_resolved_volume,
-            categories=args.categories,
             tag_enrichment=args.tag_enrichment,
         )
         logger.info(
@@ -107,18 +98,15 @@ def main(argv: Sequence[str]) -> int:
             db_path,
         )
         if args.tag_enrichment:
-            for category in args.categories:
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM selected_markets WHERE primary_domain = ?",
-                    (category,),
-                ).fetchone()[0]
-                logger.info("category registry count | category=%s selected_markets=%s", category, count)
-        else:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM selected_markets WHERE primary_domain = ?",
-                ("unassigned",),
+            tagged_count = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM selected_markets
+                WHERE tag_labels IS NOT NULL
+                  AND tag_labels != '[]'
+                """
             ).fetchone()[0]
-            logger.info("registry count | primary_domain=unassigned selected_markets=%s", count)
+            logger.info("registry count | tagged_selected_markets=%s", tagged_count)
     return 0
 
 

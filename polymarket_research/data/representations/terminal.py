@@ -13,6 +13,7 @@ from polymarket_research.data.representations.common import (
     RepresentationFrame,
     add_time_progress_features,
     binary_log_loss,
+    iter_with_progress,
     safe_float,
     safe_max,
     safe_mean,
@@ -78,6 +79,7 @@ class TerminalPanelBuilder:
     horizons_hours: tuple[int, ...] = (24, 72, 168)
     max_snapshot_staleness_hours: float | None = 12.0
     include_family_context: bool = True
+    show_progress: bool = False
 
     def build(self) -> RepresentationFrame:
         """Build terminal snapshots across configured horizons."""
@@ -90,7 +92,13 @@ class TerminalPanelBuilder:
         }
 
         rows: list[dict[str, object]] = []
-        for market in markets_df.itertuples(index=False):
+        market_iter = iter_with_progress(
+            markets_df.itertuples(index=False),
+            enabled=self.show_progress,
+            desc="terminal snapshots",
+            total=len(markets_df),
+        )
+        for market in market_iter:
             market_panel = grouped.get(str(market.market_id))
             if market_panel is None or market_panel.empty:
                 continue
@@ -121,8 +129,8 @@ class TerminalPanelBuilder:
                         "created_at": market.created_at,
                         "end_date": market.end_date,
                         "final_outcome": market.final_outcome,
-                        "domain": market.domain,
-                        "primary_domain": market.primary_domain,
+                        "platform_category": getattr(market, "platform_category", None),
+                        "research_category": getattr(market, "research_category", None),
                         "family_id": market.family_id,
                         "volume_num": market.volume_num,
                         "trade_rows": market.trade_rows,
@@ -141,8 +149,12 @@ class TerminalPanelBuilder:
         if frame.empty:
             return RepresentationFrame(name="terminal_panel", frame=frame)
 
+        if self.show_progress:
+            print("[terminal snapshots] attaching time features")
         frame = add_time_progress_features(frame, timestamp_col="cutoff_timestamp_utc")
         if self.include_family_context:
+            if self.show_progress:
+                print("[terminal snapshots] attaching family context")
             frame = FamilyContextBuilder(
                 market_meta=markets_df[["market_id", "family_id"]],
                 probabilities=probabilities_df,
@@ -153,7 +165,10 @@ class TerminalPanelBuilder:
                 prefix="family",
             )
 
-        domain_dummies = pd.get_dummies(frame["primary_domain"], prefix="domain", dtype=float)
-        frame = pd.concat([frame, domain_dummies], axis=1)
+        if self.show_progress:
+            print("[terminal snapshots] finalizing frame")
+        category_source = frame["research_category"].fillna("unknown")
+        category_dummies = pd.get_dummies(category_source, prefix="category", dtype=float)
+        frame = pd.concat([frame, category_dummies], axis=1)
         frame = frame.sort_values(["end_date", "market_id", "horizon_hours"], kind="stable").reset_index(drop=True)
         return RepresentationFrame(name="terminal_panel", frame=frame)

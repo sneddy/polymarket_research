@@ -20,51 +20,6 @@ def _pending_predicate(*, require_raw_trades: bool) -> str:
     return "a.market_id IS NULL"
 
 
-def build_pending_queue(
-    conn: sqlite3.Connection,
-    category: str,
-    *,
-    require_raw_trades: bool = False,
-) -> pd.DataFrame:
-    """Return market rows that still need probability history downloads."""
-    return pd.read_sql_query(
-        f"""
-        SELECT
-            m.market_id,
-            m.condition_id,
-            m.market_slug,
-            m.event_id,
-            m.event_slug,
-            m.event_title,
-            m.event_series_slug,
-            m.question,
-            m.description,
-            m.resolution_source,
-            m.created_at,
-            m.end_date,
-            m.volume_num,
-            m.final_outcome,
-            m.final_yes_probability,
-            COALESCE(m.outcomes, u.outcomes) AS outcomes,
-            COALESCE(m.clob_token_ids, u.clob_token_ids) AS clob_token_ids,
-            m.tag_labels,
-            m.matched_tags,
-            m.matched_domains,
-            m.primary_domain
-        FROM selected_markets AS m
-        LEFT JOIN market_universe AS u
-            ON u.market_id = m.market_id
-        LEFT JOIN added_markets AS a
-            ON a.market_id = m.market_id
-        WHERE m.primary_domain = ?
-          AND {_pending_predicate(require_raw_trades=require_raw_trades)}
-        ORDER BY m.created_at DESC, m.volume_num DESC
-        """,
-        conn,
-        params=(category,),
-    )
-
-
 def build_pending_queue_all(
     conn: sqlite3.Connection,
     *,

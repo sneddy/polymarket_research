@@ -55,6 +55,15 @@ conda run -n polymarket python -m scripts.get_history \
   --log-dir ../logs
 ```
 
+Full rebuild of the history layer:
+
+```bash
+conda run -n polymarket python -m scripts.get_history \
+  --db-path ../db/kalshi_probability_dataset.sqlite \
+  --log-dir ../logs \
+  --force-remove
+```
+
 ## 1. Download Series Metadata
 
 ```bash
@@ -194,15 +203,21 @@ This stage:
 - reads `selected_markets` where `history_ready = 1`
 - skips markets already present in `added_markets`
 - fetches the live/historical cutoff once at run start
-- downloads 1-minute candle history into `minute_candles`
+- downloads 1-minute candle history
 - resamples those candles to 5-minute rows in `probabilities`
 - writes one manifest row per market into `added_markets`
+- stores raw 1-minute rows in `minute_candles` only when `--store-candles` is enabled
 
 Useful knobs:
 
 - `--max-markets`
-- `--chunk-days`
 - `--force-refresh`
+- `--force-remove`
+- `--store-candles`
+
+Operational note:
+
+- if Kalshi starts returning `429 Too Many Requests` during `get_history`, increase `KALSHI_HTTP_CANDLE_PAUSE_SECONDS` in your environment or `.env`
 
 ## Current Tables
 

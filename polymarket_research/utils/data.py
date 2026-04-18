@@ -1,41 +1,94 @@
-"""Small helper functions for loading and persisting the basic Polymarket dataset."""
+"""Small helper functions for loading and persisting the basic market dataset."""
 
 from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
-from typing import Sequence
+from typing import Literal, Sequence
 
 import pandas as pd
 
 
 def resolve_repo_root(start: str | Path | None = None) -> Path:
-    """Resolve the repository root by walking upward until the benchmarks directory is found."""
+    """Resolve the repository root by walking upward until current repo markers are found."""
 
     current = Path(start or Path.cwd()).resolve()
     for candidate in (current, *current.parents):
-        if (candidate / "benchmarks").exists():
+        if (
+            (candidate / "polymarket_research").is_dir()
+            and (candidate / "pyproject.toml").is_file()
+        ):
             return candidate
     raise RuntimeError(f"Could not locate repository root from start={current}")
 
 
-def default_db_path(repo_root: str | Path | None = None) -> Path:
-    """Return the default SQLite path used by the local resolved Polymarket dataset."""
+_SOURCE_NAME = Literal["polymarket", "kalshi"]
+
+
+def default_db_path(
+    repo_root: str | Path | None = None,
+    *,
+    source: _SOURCE_NAME = "polymarket",
+) -> Path:
+    """Return the default SQLite path for the requested source."""
 
     root = resolve_repo_root(repo_root)
-    return root / "db" / "resolved_probability_dataset.sqlite"
+    filename = {
+        "polymarket": "resolved_probability_dataset.sqlite",
+        "kalshi": "kalshi_probability_dataset.sqlite",
+    }[source]
+    return root / "db" / filename
 
 
-def open_sqlite_dataset(db_path: str | Path | None = None) -> sqlite3.Connection:
-    """Open the local SQLite dataset that stores resolved Polymarket markets and probabilities."""
+def open_sqlite_dataset(
+    db_path: str | Path | None = None,
+    *,
+    source: _SOURCE_NAME = "polymarket",
+) -> sqlite3.Connection:
+    """Open the local SQLite dataset that stores resolved market histories and probabilities."""
 
-    conn = sqlite3.connect(str(db_path or default_db_path()))
+    conn = sqlite3.connect(str(db_path or default_db_path(source=source)))
     conn.execute("PRAGMA foreign_keys=ON;")
     return conn
 
 
-def load_selected_markets(conn: sqlite3.Connection) -> pd.DataFrame:
-    """Load the full selected-market registry plus export download metadata."""
+def infer_data_source(conn: sqlite3.Connection) -> _SOURCE_NAME:
+    """Infer the dataset source from available SQLite tables/columns."""
+
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+    if "raw_series" in tables or "selected_series" in tables:
+        return "kalshi"
+
+    selected_market_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(selected_markets)").fetchall()
+    }
+    if {"venue_market_id", "kalshi_category"} & selected_market_columns:
+        return "kalshi"
+    return "polymarket"
+
+
+def load_selected_markets(
+    conn: sqlite3.Connection,
+    *,
+    source: _SOURCE_NAME | Literal["auto"] = "auto",
+) -> pd.DataFrame:
+    """Load the selected-market registry plus export download metadata."""
+
+    resolved_source: _SOURCE_NAME = infer_data_source(conn) if source == "auto" else source
+    if resolved_source == "kalshi":
+        frame = _load_selected_markets_kalshi(conn)
+    else:
+        frame = _load_selected_markets_polymarket(conn)
+    return _normalize_market_frame(frame)
+
+
+def _load_selected_markets_polymarket(conn: sqlite3.Connection) -> pd.DataFrame:
+    """Load the Polymarket selected-market registry plus export download metadata."""
 
     query = """
     SELECT
@@ -61,7 +114,8 @@ def load_selected_markets(conn: sqlite3.Connection) -> pd.DataFrame:
         m.tag_labels,
         m.matched_tags,
         m.matched_domains,
-        m.primary_domain,
+        m.primary_domain AS research_category,
+        NULL AS kalshi_category,
         COALESCE(u.synced_at_utc, m.synced_at_utc) AS synced_at_utc,
         a.added_at_utc,
         a.trade_rows,
@@ -71,7 +125,8 @@ def load_selected_markets(conn: sqlite3.Connection) -> pd.DataFrame:
         a.raw_trade_rows,
         a.raw_trade_start_utc,
         a.raw_trade_end_utc,
-        a.raw_trades_saved
+        a.raw_trades_saved,
+        'polymarket' AS source
     FROM selected_markets AS m
     LEFT JOIN market_universe AS u
         ON u.market_id = m.market_id
@@ -79,8 +134,58 @@ def load_selected_markets(conn: sqlite3.Connection) -> pd.DataFrame:
         ON a.market_id = m.market_id
     ORDER BY COALESCE(u.created_at, m.created_at) DESC, COALESCE(u.volume_num, m.volume_num, 0.0) DESC
     """
-    frame = pd.read_sql_query(query, conn)
-    return _normalize_market_frame(frame)
+    return pd.read_sql_query(query, conn)
+
+
+def _load_selected_markets_kalshi(conn: sqlite3.Connection) -> pd.DataFrame:
+    """Load the Kalshi selected-market registry into the shared selected-market contract."""
+
+    query = """
+    SELECT
+        m.market_id,
+        NULL AS condition_id,
+        COALESCE(m.ticker, u.ticker, m.venue_market_id, a.venue_market_id, m.market_id) AS market_slug,
+        COALESCE(m.event_id, u.event_id) AS event_id,
+        COALESCE(m.event_ticker, u.event_ticker, m.venue_event_id) AS event_slug,
+        COALESCE(m.event_title, u.event_title) AS event_title,
+        COALESCE(m.series_ticker, u.series_ticker, a.series_ticker) AS event_series_slug,
+        COALESCE(m.question, u.question, u.title) AS question,
+        COALESCE(m.description, u.description) AS description,
+        NULL AS resolution_source,
+        COALESCE(m.is_active, u.is_active, 0) AS active,
+        COALESCE(m.is_closed, u.is_closed, 0) AS closed,
+        0 AS archived,
+        COALESCE(m.created_at, u.created_at) AS created_at,
+        COALESCE(m.end_date, u.end_date, m.settlement_ts, u.settlement_ts, m.close_time, u.close_time) AS end_date,
+        COALESCE(m.volume_num, u.volume_num) AS volume_num,
+        COALESCE(m.liquidity_dollars, u.liquidity_dollars) AS liquidity_num,
+        m.final_outcome,
+        m.final_yes_probability,
+        NULL AS tag_labels,
+        NULL AS matched_tags,
+        NULL AS matched_domains,
+        m.primary_domain AS research_category,
+        m.kalshi_category,
+        COALESCE(m.synced_at_utc, u.synced_at_utc) AS synced_at_utc,
+        a.added_at_utc,
+        COALESCE(a.raw_trade_rows, 0) AS trade_rows,
+        a.probability_rows,
+        a.probability_start_utc,
+        a.probability_end_utc,
+        a.raw_trade_rows,
+        a.raw_trade_start_utc,
+        a.raw_trade_end_utc,
+        a.raw_trades_saved,
+        COALESCE(m.is_resolved, u.is_resolved, 0) AS resolved,
+        COALESCE(m.source, a.source, 'kalshi') AS source
+    FROM selected_markets AS m
+    LEFT JOIN market_universe AS u
+        ON u.market_id = m.market_id
+    LEFT JOIN added_markets AS a
+        ON a.market_id = m.market_id
+    ORDER BY COALESCE(m.created_at, u.created_at) DESC, COALESCE(m.volume_num, u.volume_num, 0.0) DESC
+    """
+    return pd.read_sql_query(query, conn)
 
 
 def load_probabilities_for_market_frame(
@@ -174,7 +279,15 @@ def _normalize_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """Normalize market metadata types after loading them from SQLite."""
 
     out = frame.copy()
-    for column in ("created_at", "end_date", "probability_start_utc", "probability_end_utc", "synced_at_utc"):
+    for column in (
+        "created_at",
+        "end_date",
+        "probability_start_utc",
+        "probability_end_utc",
+        "raw_trade_start_utc",
+        "raw_trade_end_utc",
+        "synced_at_utc",
+    ):
         if column in out.columns:
             out[column] = pd.to_datetime(out[column], utc=True, errors="coerce")
     for column in ("market_id", "event_id"):
@@ -192,11 +305,31 @@ def _normalize_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
     for column in ("active", "closed", "archived"):
         if column in out.columns:
             out[column] = pd.to_numeric(out[column], errors="coerce").fillna(0).astype(int)
-    if {"end_date", "synced_at_utc"}.issubset(out.columns):
+    if "resolved" in out.columns:
+        out["resolved"] = pd.to_numeric(out["resolved"], errors="coerce").fillna(0).astype(int).astype(bool)
+    elif {"end_date", "synced_at_utc"}.issubset(out.columns):
         out["resolved"] = (
             out["end_date"].notna()
             & out["synced_at_utc"].notna()
             & (out["end_date"] <= out["synced_at_utc"])
         )
+
+    platform_category = _normalize_category_series(
+        out["kalshi_category"] if "kalshi_category" in out.columns else pd.Series(pd.NA, index=out.index, dtype="string")
+    )
+    out["platform_category"] = platform_category
+    out["research_category"] = _normalize_category_series(
+        out["research_category"] if "research_category" in out.columns else pd.Series(pd.NA, index=out.index, dtype="string")
+    ).fillna(platform_category)
     out["market_id"] = out["market_id"].astype(str)
     return out.reset_index(drop=True)
+
+
+def _normalize_category_series(series: pd.Series) -> pd.Series:
+    """Normalize category-like values, keeping only meaningful labels."""
+
+    normalized = series.astype("string").str.strip()
+    invalid = normalized.isna() | normalized.eq("") | normalized.str.lower().isin(
+        {"unknown", "unassigned", "none", "<na>", "nan"}
+    )
+    return normalized.mask(invalid, pd.NA)

@@ -1,0 +1,50 @@
+{
+  "config": {
+    "horizons_hours": [
+      24
+    ],
+    "max_snapshot_staleness_hours": 12.0,
+    "max_snapshot_staleness_hours_by_horizon": {
+      "168": 24.0,
+      "24": 12.0,
+      "72": 18.0
+    },
+    "show_progress": true,
+    "split_on": "end_date",
+    "split_timestamp_utc": null,
+    "train_fraction": 0.8
+  },
+  "example_columns": [
+    "market_id",
+    "market_slug",
+    "question",
+    "created_at",
+    "end_date",
+    "primary_domain",
+    "domain",
+    "family_id",
+    "horizon_hours",
+    "cutoff_timestamp_utc",
+    "label",
+    "split"
+  ],
+  "horizons_hours": [
+    24
+  ],
+  "market_timeseries_columns": [
+    "market_id",
+    "timestamp_utc",
+    "yes_probability"
+  ],
+  "market_timeseries_rows": 144202396,
+  "name": "terminal_benchmark",
+  "observable_information": "target market metadata and market-level probability history up to cutoff",
+  "release_name": "polymarket-terminal-24h",
+  "rows": 10156,
+  "split_counts": {
+    "test": 2238,
+    "train": 7918
+  },
+  "target_type": "final resolved outcome",
+  "task": "terminal_outcome_prediction"
+}

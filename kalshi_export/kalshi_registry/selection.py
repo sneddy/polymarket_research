@@ -156,7 +156,6 @@ def plot_raw_market_volumes(raw_markets_df: pd.DataFrame) -> Path | None:
     axes[1].tick_params(axis="x", rotation=0)
 
     output_path = _save_plot("kalshi_raw_markets_volume_buckets.png")
-    plt.show()
     plt.close(fig)
     return output_path
 

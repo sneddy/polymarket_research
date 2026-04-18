@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Iterator, TypeVar
 
 import numpy as np
 import pandas as pd
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,47 @@ class RepresentationFrame:
     def from_parquet(cls, name: str, path: str | Path) -> "RepresentationFrame":
         """Load a named representation from a parquet file."""
         return cls(name=name, frame=pd.read_parquet(path))
+
+
+def iter_with_progress(
+    iterable: Iterable[T],
+    *,
+    enabled: bool = False,
+    desc: str = "progress",
+    total: int | None = None,
+    every: int | None = None,
+) -> Iterator[T]:
+    """Yield items while printing lightweight progress updates when enabled."""
+    if not enabled:
+        yield from iterable
+        return
+
+    if total is None and hasattr(iterable, "__len__"):
+        try:
+            total = len(iterable)  # type: ignore[arg-type]
+        except Exception:
+            total = None
+
+    if total is None:
+        every = max(1, every or 100)
+        print(f"[{desc}] started")
+        for idx, item in enumerate(iterable, start=1):
+            yield item
+            if idx == 1 or idx % every == 0:
+                print(f"[{desc}] {idx} items")
+        print(f"[{desc}] done")
+        return
+
+    every = max(1, every or max(1, total // 20))
+    print(f"[{desc}] 0/{total} (0%)")
+    for idx, item in enumerate(iterable, start=1):
+        yield item
+        if idx == 1 or idx == total or idx % every == 0:
+            pct = int(round((100.0 * idx) / max(1, total)))
+            filled = min(20, int(round(pct / 5)))
+            bar = "#" * filled + "-" * (20 - filled)
+            print(f"[{desc}] {idx}/{total} ({pct}%) [{bar}]")
+    print(f"[{desc}] done")
 
 
 def binary_log_loss(y_true: np.ndarray, p_pred: np.ndarray, *, eps: float = 1e-6) -> np.ndarray:
@@ -69,8 +112,8 @@ def default_feature_columns(df: pd.DataFrame, *, exclude: Iterable[str] | None =
         "resolution_source",
         "description",
         "tag_labels",
-        "primary_domain",
-        "domain",
+        "platform_category",
+        "research_category",
         "family_id",
     }
     if exclude is not None:

@@ -28,7 +28,9 @@ class TaskFrame:
         """Return a compact summary of the task frame."""
         positive_rate = None
         if self.target_col in self.frame.columns and pd.api.types.is_numeric_dtype(self.frame[self.target_col]):
-            positive_rate = float(self.frame[self.target_col].mean())
+            target_values = self.frame[self.target_col].dropna().unique().tolist()
+            if set(target_values).issubset({0, 1}):
+                positive_rate = float(self.frame[self.target_col].mean())
         return pd.DataFrame(
             [
                 {

@@ -30,6 +30,7 @@ class HttpConfig:
     backoff_base_seconds: float = 1.0
     backoff_max_seconds: float = 60.0
     series_pause_seconds: float = 0.2
+    candle_pause_seconds: float = 0.05
     user_agent: str = "polymarket_research/0.1"
 
 
@@ -56,6 +57,7 @@ def load_http_config_from_env(prefix: str = "KALSHI_") -> HttpConfig:
         backoff_base_seconds=_get_float("HTTP_BACKOFF_BASE_SECONDS", HttpConfig.backoff_base_seconds),
         backoff_max_seconds=_get_float("HTTP_BACKOFF_MAX_SECONDS", HttpConfig.backoff_max_seconds),
         series_pause_seconds=_get_float("HTTP_SERIES_PAUSE_SECONDS", HttpConfig.series_pause_seconds),
+        candle_pause_seconds=_get_float("HTTP_CANDLE_PAUSE_SECONDS", HttpConfig.candle_pause_seconds),
         user_agent=user_agent,
     )
 

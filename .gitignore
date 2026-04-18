@@ -1,3 +1,7 @@
+# manual tmp ignores
+writing
+
+
 .DS_Store
 __pycache__/
 *.py[cod]

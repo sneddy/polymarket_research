@@ -3,11 +3,11 @@
 from polymarket_research.tasks.base import TaskFrame
 from polymarket_research.tasks.repricing import RepricingTaskBuilder
 from polymarket_research.tasks.terminal import TerminalOutcomeTaskBuilder
-from polymarket_research.tasks.trust import TrustTaskBuilder
+from polymarket_research.tasks.decisiveness import DecisivenessTaskBuilder
 
 __all__ = [
     "TaskFrame",
     "RepricingTaskBuilder",
     "TerminalOutcomeTaskBuilder",
-    "TrustTaskBuilder",
+    "DecisivenessTaskBuilder",
 ]

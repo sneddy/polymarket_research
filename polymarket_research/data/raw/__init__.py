@@ -1,23 +1,15 @@
-"""Raw source-of-truth objects for Polymarket data."""
+"""Raw source-of-truth objects for market data."""
 
 from polymarket_research.data.raw.dataset import (
-    RawDatasetBundle,
-    RawDatasetHandle,
     RawExternalCovariates,
-    RawPolymarketBundle,
-    RawPolymarketHandle,
-    RawPolymarketDataset,
-    RawPolymarketSnapshot,
-    RawSnapshot,
+    RawMarketBundle,
+    RawMarketHandle,
+    RawMarketSnapshot,
 )
 
 __all__ = [
-    "RawDatasetBundle",
-    "RawDatasetHandle",
     "RawExternalCovariates",
-    "RawPolymarketBundle",
-    "RawPolymarketHandle",
-    "RawPolymarketDataset",
-    "RawPolymarketSnapshot",
-    "RawSnapshot",
+    "RawMarketBundle",
+    "RawMarketHandle",
+    "RawMarketSnapshot",
 ]

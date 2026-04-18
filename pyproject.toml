@@ -9,6 +9,9 @@ description = "Reusable data abstractions for Polymarket research workflows."
 readme = "README.md"
 requires-python = ">=3.11"
 
+[project.optional-dependencies]
+hf = ["huggingface-hub>=0.20"]
+
 [tool.setuptools]
 include-package-data = false
 

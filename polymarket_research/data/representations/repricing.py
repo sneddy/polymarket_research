@@ -10,6 +10,7 @@ from polymarket_research.data.canonical.dataset import CanonicalDataset
 from polymarket_research.data.representations.common import (
     RepresentationFrame,
     add_time_progress_features,
+    iter_with_progress,
     safe_float,
     safe_max,
     safe_mean,
@@ -32,6 +33,7 @@ class RepricingPanelBuilder:
     shock_z_threshold: float = 2.0
     shock_std_window: int = 288
     shock_join_max_age: str | None = "2D"
+    show_progress: bool = False
 
     def build(self) -> RepresentationFrame:
         """Build the repricing panel and optionally join external shock features."""
@@ -45,7 +47,14 @@ class RepricingPanelBuilder:
         rows: list[dict[str, object]] = []
         meta_by_market = markets_df.set_index("market_id").to_dict("index")
 
-        for market_id, frame in probabilities_df.groupby("market_id", sort=False):
+        grouped_markets = list(probabilities_df.groupby("market_id", sort=False))
+        market_iter = iter_with_progress(
+            grouped_markets,
+            enabled=self.show_progress,
+            desc="repricing states",
+            total=len(grouped_markets),
+        )
+        for market_id, frame in market_iter:
             meta = meta_by_market.get(str(market_id))
             if meta is None:
                 continue
@@ -81,8 +90,8 @@ class RepricingPanelBuilder:
                         "end_date": meta["end_date"],
                         "question": meta["question"],
                         "description": meta["description"],
-                        "primary_domain": meta["primary_domain"],
-                        "domain": meta["domain"],
+                        "platform_category": meta.get("platform_category"),
+                        "research_category": meta.get("research_category"),
                         "family_id": meta["family_id"],
                         "future_horizon_hours": int(self.future_horizon_hours),
                         "target": int(abs(future_move) >= self.move_threshold),
@@ -106,11 +115,16 @@ class RepricingPanelBuilder:
         if frame.empty:
             return RepresentationFrame(name="repricing_panel", frame=frame)
 
+        if self.show_progress:
+            print("[repricing states] attaching time features")
         frame = add_time_progress_features(frame, timestamp_col="timestamp_utc")
-        domain_dummies = pd.get_dummies(frame["primary_domain"], prefix="domain", dtype=float)
-        frame = pd.concat([frame, domain_dummies], axis=1)
+        category_source = frame["research_category"].fillna("unknown")
+        category_dummies = pd.get_dummies(category_source, prefix="category", dtype=float)
+        frame = pd.concat([frame, category_dummies], axis=1)
 
         if self.attach_external_shocks:
+            if self.show_progress:
+                print("[repricing states] building and joining external shock features")
             shock_panel = ShockPanelBuilder(
                 canonical=self.canonical,
                 z_threshold=self.shock_z_threshold,
@@ -128,5 +142,7 @@ class RepricingPanelBuilder:
                 if shock_cols:
                     frame["btc_or_eth_shock"] = frame[shock_cols].max(axis=1)
 
+        if self.show_progress:
+            print("[repricing states] finalizing frame")
         frame = frame.sort_values("timestamp_utc", kind="stable").reset_index(drop=True)
         return RepresentationFrame(name="repricing_panel", frame=frame)

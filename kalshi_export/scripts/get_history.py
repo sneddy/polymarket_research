@@ -25,6 +25,7 @@ from scripts.common import DEFAULT_DB_PATH, DEFAULT_LOG_DIR, init_run_context
 
 
 logger = logging.getLogger(__name__)
+_CANDLE_CHUNK_DAYS = 3
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -32,15 +33,19 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     p.add_argument("--db-path", default=str(DEFAULT_DB_PATH), help="SQLite database path.")
     p.add_argument("--max-markets", type=int, default=None, help="Optional cap on the number of markets processed in this run.")
     p.add_argument(
-        "--chunk-days",
-        type=int,
-        default=7,
-        help="Candlestick request window per API call in days. Default: 7.",
-    )
-    p.add_argument(
         "--force-refresh",
         action="store_true",
         help="Redownload history even for markets already present in `added_markets`.",
+    )
+    p.add_argument(
+        "--force-remove",
+        action="store_true",
+        help="Clear `minute_candles`, `probabilities`, and `added_markets` before rebuilding history.",
+    )
+    p.add_argument(
+        "--store-candles",
+        action="store_true",
+        help="Persist raw 1-minute candle rows into `minute_candles`. Default path stores only `probabilities` and `added_markets`.",
     )
     p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging verbosity.")
     p.add_argument("--log-dir", default=str(DEFAULT_LOG_DIR), help="Directory for per-run log files.")
@@ -60,15 +65,31 @@ def main(argv: Sequence[str]) -> int:
     kalshi = KalshiClient()
     with sqlite3.connect(db_path) as conn:
         ensure_schema(conn)
+        if args.force_remove:
+            minute_rows = conn.execute("SELECT COUNT(*) FROM minute_candles").fetchone()[0]
+            prob_rows = conn.execute("SELECT COUNT(*) FROM probabilities").fetchone()[0]
+            added_rows = conn.execute("SELECT COUNT(*) FROM added_markets").fetchone()[0]
+            with conn:
+                conn.execute("DELETE FROM minute_candles")
+                conn.execute("DELETE FROM probabilities")
+                conn.execute("DELETE FROM added_markets")
+            logger.info(
+                "Kalshi history tables cleared before refresh | minute_candles=%s probabilities=%s added_markets=%s",
+                minute_rows,
+                prob_rows,
+                added_rows,
+            )
         pending_df = build_pending_queue(conn, force_refresh=args.force_refresh)
         if args.max_markets is not None:
             pending_df = pending_df.head(int(args.max_markets)).reset_index(drop=True)
         queue_total = len(pending_df)
         logger.info(
-            "Kalshi get_history started | pending_markets=%s force_refresh=%s chunk_days=%s",
+            "Kalshi get_history started | pending_markets=%s force_refresh=%s force_remove=%s store_candles=%s chunk_days=%s",
             queue_total,
             args.force_refresh,
-            args.chunk_days,
+            args.force_remove,
+            args.store_candles,
+            _CANDLE_CHUNK_DAYS,
         )
         if pending_df.empty:
             logger.info("Kalshi get_history finished | pending_markets=0 db=%s", db_path)
@@ -92,7 +113,7 @@ def main(argv: Sequence[str]) -> int:
             for idx, (_, market_row) in enumerate(pending_df.iterrows(), start=1):
                 market_id = str(market_row["market_id"])
                 ticker = str(market_row["ticker"])
-                logger.info(
+                logger.debug(
                     "Kalshi history download started | market_index=%s/%s market_id=%s ticker=%s",
                     idx,
                     queue_total,
@@ -104,8 +125,8 @@ def main(argv: Sequence[str]) -> int:
                         kalshi,
                         market_row=market_row,
                         cutoff_ts=cutoff_ts,
-                        chunk_days=args.chunk_days,
-                        show_progress=True,
+                        chunk_days=_CANDLE_CHUNK_DAYS,
+                        show_progress=False,
                         progress_desc=f"Candles {idx}/{queue_total} {ticker[:32]}",
                     )
                     probability_df = build_probability_series_5m_from_candles(minute_df, market_id)
@@ -118,10 +139,11 @@ def main(argv: Sequence[str]) -> int:
                         history_source_mode=history_source_mode,
                         cutoff_ts_used=cutoff_text,
                         warnings=warnings,
+                        store_candles=bool(args.store_candles),
                     )
                     completed += 1
                     written_prob_rows += int(stats["probability_rows"])
-                    logger.info(
+                    logger.debug(
                         "Kalshi history download finished | market_index=%s/%s market_id=%s ticker=%s history_source_mode=%s minute_rows=%s probability_rows=%s warnings=%s",
                         idx,
                         queue_total,

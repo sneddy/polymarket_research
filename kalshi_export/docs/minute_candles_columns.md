@@ -2,7 +2,7 @@
 
 The table below describes the intended `minute_candles` columns for `kalshi_export`.
 
-This table is the raw candle-level history layer for Kalshi.
+This table is the optional raw candle-level history layer for Kalshi.
 It plays the role that `raw_trades` played in the Polymarket pipeline, except that Kalshi history is candles-first rather than trades-first.
 
 | column | meaning | reason |
@@ -21,5 +21,5 @@ It plays the role that `raw_trades` played in the Polymarket pipeline, except th
 
 Notes:
 
-- `minute_candles` is the raw history layer for Kalshi by default.
+- `minute_candles` is the optional raw history layer for Kalshi and is only populated when `get_history --store-candles` is used.
 - `probabilities` should be treated as the downstream 5-minute research representation built from `minute_candles`.

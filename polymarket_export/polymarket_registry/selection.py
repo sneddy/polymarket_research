@@ -10,9 +10,6 @@ import numpy as np
 import pandas as pd
 
 from clients.gamma_client import GammaClient
-from configs.resolved_dataset_domain_config import DOMAIN_KEYWORD_HINTS
-from configs.resolved_dataset_domain_config import DOMAIN_PRIORITY
-from configs.resolved_dataset_domain_config import DOMAIN_TAG_MAP
 from polymarket_registry.block_filters import apply_default_block_filters
 from polymarket_registry.filters import is_short_horizon_updown_series
 from polymarket_registry.upsert import extract_primary_event_fields
@@ -277,34 +274,17 @@ def normalize_tag_labels(payload: Any) -> list[str]:
     return sorted(set(out))
 
 
-def classify_domains(
-    tag_labels: list[str],
-    *,
-    question: str | None = None,
-    slug: str | None = None,
-) -> tuple[list[str], list[str], str | None]:
-    """Map normalized market tags and text hints onto research domains."""
-    tag_set = {str(t).strip() for t in tag_labels if str(t).strip()}
-    text_blob = " ".join(part for part in [question or "", slug or ""] if part).lower()
-
-    tag_domains = {domain for domain in DOMAIN_PRIORITY if tag_set.intersection(DOMAIN_TAG_MAP[domain])}
-    keyword_domains = {
-        domain
-        for domain, hints in DOMAIN_KEYWORD_HINTS.items()
-        if any(hint in text_blob for hint in hints)
-    }
-
-    matched_domains = [domain for domain in DOMAIN_PRIORITY if domain in tag_domains or domain in keyword_domains]
-    matched_tags = sorted(tag for tag in tag_set if any(tag in tags for tags in DOMAIN_TAG_MAP.values()))
-    primary_domain = matched_domains[0] if matched_domains else None
-    return matched_tags, matched_domains, primary_domain
+def summarize_tag_metadata(tag_labels: list[str]) -> tuple[list[str], list[str], str | None]:
+    """Preserve normalized source tags without assigning heuristic research domains."""
+    normalized_tags = sorted({str(tag).strip() for tag in tag_labels if str(tag).strip()})
+    return normalized_tags, [], None
 
 
 def enrich_candidates_with_tags(candidate_df: pd.DataFrame, gamma_client: GammaClient) -> pd.DataFrame:
-    """Attach tag-derived domain labels to candidate markets."""
+    """Attach normalized Gamma tag metadata to candidate markets."""
     total = len(candidate_df)
     rows: list[dict[str, Any]] = []
-    matched = 0
+    tagged = 0
     for idx, (_, row) in enumerate(candidate_df.iterrows(), start=1):
         try:
             tag_payload = gamma_client.get_market_tags(str(row["id"]))
@@ -318,26 +298,22 @@ def enrich_candidates_with_tags(candidate_df: pd.DataFrame, gamma_client: GammaC
             continue
 
         tag_labels = normalize_tag_labels(tag_payload)
-        matched_tags, matched_domains, primary_domain = classify_domains(
-            tag_labels,
-            question=row.get("question"),
-            slug=row.get("slug"),
-        )
+        matched_tags, matched_domains, primary_domain = summarize_tag_metadata(tag_labels)
         enriched = row.to_dict()
         enriched["tag_labels"] = tag_labels
         enriched["matched_tags"] = matched_tags
         enriched["matched_domains"] = matched_domains
         enriched["primary_domain"] = primary_domain
-        if primary_domain is not None:
-            matched += 1
+        if tag_labels:
+            tagged += 1
         rows.append(enriched)
 
         if idx % 50 == 0 or idx == total:
             logger.info(
-                "tag enrichment progress | processed=%s/%s matched=%s",
+                "tag enrichment progress | processed=%s/%s tagged=%s",
                 idx,
                 total,
-                matched,
+                tagged,
             )
 
     if not rows:
