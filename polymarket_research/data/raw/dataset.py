@@ -185,7 +185,12 @@ class RawMarketHandle:
             market_order=market_order,
         )
 
-    def load_market_universe(self, selected_markets: pd.DataFrame | None = None) -> pd.DataFrame:
+    def load_market_universe(
+        self,
+        selected_markets: pd.DataFrame | None = None,
+        *,
+        show_progress: bool = False,
+    ) -> pd.DataFrame:
         """Load raw market-universe rows for the provided or default selected market ids."""
         selected = self._ensure_selected_markets(selected_markets)
         with open_sqlite_dataset(self.db_path, source=self.source) as conn:
@@ -195,9 +200,15 @@ class RawMarketHandle:
                 market_ids=selected["market_id"].tolist(),
                 order_by="created_at DESC",
                 chunk_size=self.chunk_size,
+                show_progress=show_progress,
             )
 
-    def load_added_markets(self, selected_markets: pd.DataFrame | None = None) -> pd.DataFrame:
+    def load_added_markets(
+        self,
+        selected_markets: pd.DataFrame | None = None,
+        *,
+        show_progress: bool = False,
+    ) -> pd.DataFrame:
         """Load added-markets manifest rows for the provided or default selected scope."""
         selected = self._ensure_selected_markets(selected_markets)
         with open_sqlite_dataset(self.db_path, source=self.source) as conn:
@@ -207,15 +218,26 @@ class RawMarketHandle:
                 market_ids=selected["market_id"].tolist(),
                 order_by="added_at_utc DESC",
                 chunk_size=self.chunk_size,
+                show_progress=show_progress,
             )
 
-    def load_probabilities(self, selected_markets: pd.DataFrame | None = None) -> pd.DataFrame:
+    def load_probabilities(
+        self,
+        selected_markets: pd.DataFrame | None = None,
+        *,
+        show_progress: bool = False,
+    ) -> pd.DataFrame:
         """Load raw probability history for the provided or default selected markets."""
         selected = self._ensure_selected_markets(selected_markets)
         with open_sqlite_dataset(self.db_path, source=self.source) as conn:
-            return load_probabilities_for_market_frame(conn, selected)
+            return load_probabilities_for_market_frame(conn, selected, show_progress=show_progress)
 
-    def load_raw_trades(self, selected_markets: pd.DataFrame | None = None) -> pd.DataFrame:
+    def load_raw_trades(
+        self,
+        selected_markets: pd.DataFrame | None = None,
+        *,
+        show_progress: bool = False,
+    ) -> pd.DataFrame:
         """Load raw normalized fill rows for the provided or default selected markets."""
         selected = self._ensure_selected_markets(selected_markets)
         with open_sqlite_dataset(self.db_path, source=self.source) as conn:
@@ -225,6 +247,7 @@ class RawMarketHandle:
                 market_ids=selected["market_id"].tolist(),
                 order_by="market_id, timestamp_utc",
                 chunk_size=self.chunk_size,
+                show_progress=show_progress,
             )
 
     def load_bundle(
@@ -236,16 +259,49 @@ class RawMarketHandle:
         include_raw_trades: bool = False,
         market_limit: int | None = None,
         market_order: Literal["latest", "largest"] | None = None,
+        show_progress: bool = False,
     ) -> RawMarketBundle:
         """Materialize a raw bundle with optional large tables."""
+        if show_progress:
+            print(f"[raw bundle] loading selected markets from: {self.db_path}")
         selected_markets = self.load_selected_markets(
             market_limit=market_limit,
             market_order=market_order,
         )
-        market_universe = self.load_market_universe(selected_markets) if include_market_universe else None
-        added_markets = self.load_added_markets(selected_markets) if include_download_manifest else None
-        probabilities = self.load_probabilities(selected_markets) if include_probabilities else None
-        raw_trades = self.load_raw_trades(selected_markets) if include_raw_trades else None
+        if show_progress:
+            print(f"[raw bundle] loaded selected markets (rows={len(selected_markets)})")
+
+        market_universe = None
+        if include_market_universe:
+            if show_progress:
+                print("[raw bundle] loading market_universe")
+            market_universe = self.load_market_universe(selected_markets, show_progress=show_progress)
+            if show_progress:
+                print(f"[raw bundle] loaded market_universe (rows={len(market_universe)})")
+
+        added_markets = None
+        if include_download_manifest:
+            if show_progress:
+                print("[raw bundle] loading added_markets")
+            added_markets = self.load_added_markets(selected_markets, show_progress=show_progress)
+            if show_progress:
+                print(f"[raw bundle] loaded added_markets (rows={len(added_markets)})")
+
+        probabilities = None
+        if include_probabilities:
+            if show_progress:
+                print("[raw bundle] loading probabilities")
+            probabilities = self.load_probabilities(selected_markets, show_progress=show_progress)
+            if show_progress:
+                print(f"[raw bundle] loaded probabilities (rows={len(probabilities)})")
+
+        raw_trades = None
+        if include_raw_trades:
+            if show_progress:
+                print("[raw bundle] loading raw_trades")
+            raw_trades = self.load_raw_trades(selected_markets, show_progress=show_progress)
+            if show_progress:
+                print(f"[raw bundle] loaded raw_trades (rows={len(raw_trades)})")
         return RawMarketBundle(
             market_universe=market_universe,
             selected_markets=selected_markets,
@@ -459,13 +515,25 @@ def _load_table_for_market_ids(
     market_ids: list[str],
     order_by: str,
     chunk_size: int = 250,
+    show_progress: bool = False,
 ) -> pd.DataFrame:
     market_ids = [str(market_id) for market_id in market_ids]
     if not market_ids:
         return pd.DataFrame()
 
+    chunk_starts = range(0, len(market_ids), chunk_size)
+    if show_progress:
+        from tqdm.auto import tqdm
+
+        chunk_starts = tqdm(
+            chunk_starts,
+            total=((len(market_ids) + chunk_size - 1) // chunk_size),
+            desc=f"sqlite {table_name}",
+            unit="chunk",
+        )
+
     frames: list[pd.DataFrame] = []
-    for chunk_start in range(0, len(market_ids), chunk_size):
+    for chunk_start in chunk_starts:
         chunk = market_ids[chunk_start : chunk_start + chunk_size]
         placeholders = ",".join(["?"] * len(chunk))
         query = f"""

@@ -191,10 +191,16 @@ def _load_selected_markets_kalshi(conn: sqlite3.Connection) -> pd.DataFrame:
 def load_probabilities_for_market_frame(
     conn: sqlite3.Connection,
     markets: pd.DataFrame,
+    *,
+    show_progress: bool = False,
 ) -> pd.DataFrame:
     """Load probability history for all market ids contained in the provided dataframe."""
 
-    return _load_probabilities_for_markets(conn, markets["market_id"].tolist())
+    return _load_probabilities_for_markets(
+        conn,
+        markets["market_id"].tolist(),
+        show_progress=show_progress,
+    )
 
 
 def save_dataset_frames(
@@ -231,6 +237,8 @@ def load_saved_dataset_frames(directory: str | Path) -> tuple[pd.DataFrame, pd.D
 def _load_probabilities_for_markets(
     conn: sqlite3.Connection,
     market_ids: Sequence[str],
+    *,
+    show_progress: bool = False,
 ) -> pd.DataFrame:
     """Load probability trajectories for the requested market ids from SQLite."""
 
@@ -248,8 +256,19 @@ def _load_probabilities_for_markets(
             ]
         )
 
+    chunk_starts = range(0, len(market_ids), 250)
+    if show_progress:
+        from tqdm.auto import tqdm
+
+        chunk_starts = tqdm(
+            chunk_starts,
+            total=((len(market_ids) + 249) // 250),
+            desc="sqlite probabilities",
+            unit="chunk",
+        )
+
     frames: list[pd.DataFrame] = []
-    for chunk_start in range(0, len(market_ids), 250):
+    for chunk_start in chunk_starts:
         chunk = market_ids[chunk_start : chunk_start + 250]
         placeholders = ",".join(["?"] * len(chunk))
         query = f"""
@@ -267,11 +286,20 @@ def _load_probabilities_for_markets(
         """
         frames.append(pd.read_sql_query(query, conn, params=tuple(chunk)))
 
+    if show_progress:
+        total_rows = int(sum(len(frame) for frame in frames))
+        print(f"[sqlite probabilities] fetched chunks={len(frames)} raw_rows={total_rows}")
+        print("[sqlite probabilities] concatenating chunks")
     out = pd.concat(frames, ignore_index=True)
+    if show_progress:
+        print(f"[sqlite probabilities] concatenated rows={len(out)}")
+        print("[sqlite probabilities] normalizing dtypes")
     out["timestamp_utc"] = pd.to_datetime(out["timestamp_utc"], utc=True, errors="coerce")
     for column in ("yes_probability", "trade_count", "total_size", "last_trade_price"):
         out[column] = pd.to_numeric(out[column], errors="coerce")
     out["observed_trade"] = pd.to_numeric(out["observed_trade"], errors="coerce").fillna(0).astype(int)
+    if show_progress:
+        print("[sqlite probabilities] sorting rows")
     return out.sort_values(["market_id", "timestamp_utc"], kind="stable").reset_index(drop=True)
 
 

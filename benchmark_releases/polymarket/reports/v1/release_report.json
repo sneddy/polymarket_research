@@ -1,0 +1,518 @@
+{
+  "benchmark_manifests": {
+    "decisiveness": {
+      "config": {
+        "decisive_threshold": 0.95,
+        "min_history_points": 24,
+        "min_prefix_age_hours": 6.0,
+        "min_time_to_decisive_hours": 1.0,
+        "ordinal_bin_edges_hours": [
+          24.0,
+          72.0
+        ],
+        "ordinal_bin_labels": [
+          "short",
+          "medium",
+          "long"
+        ],
+        "sample_every_hours": 12,
+        "show_progress": true,
+        "split_on": "decisive_timestamp_utc",
+        "split_timestamp_utc": null,
+        "target_market_only": true,
+        "train_fraction": 0.8
+      },
+      "decisive_side_distribution": {
+        "by_split": {
+          "test": {
+            "no": 130548,
+            "yes": 46600
+          },
+          "train": {
+            "no": 579436,
+            "yes": 168339
+          }
+        },
+        "overall": {
+          "no": 709984,
+          "yes": 214939
+        }
+      },
+      "example_columns": [
+        "market_id",
+        "cutoff_timestamp_utc",
+        "market_slug",
+        "question",
+        "created_at",
+        "end_date",
+        "platform_category",
+        "research_category",
+        "family_id",
+        "prefix_rows",
+        "cutoff_age_hours",
+        "current_yes_probability",
+        "confidence_margin",
+        "distance_to_yes_decisive",
+        "distance_to_no_decisive",
+        "decisive_threshold",
+        "split"
+      ],
+      "families": 10836,
+      "market_timeseries_columns": [
+        "market_id",
+        "timestamp_utc",
+        "yes_probability"
+      ],
+      "market_timeseries_rows": 176867529,
+      "markets": 13460,
+      "name": "decisiveness_benchmark",
+      "observable_information": "target market metadata and market-level probability history up to the cutoff timestamp",
+      "ordinal_bin_edges_hours": [
+        24.0,
+        72.0
+      ],
+      "ordinal_bin_labels": [
+        "short",
+        "medium",
+        "long"
+      ],
+      "ordinal_label_distribution": {
+        "by_split": {
+          "test": {
+            "long": 159620,
+            "medium": 9776,
+            "short": 7752
+          },
+          "train": {
+            "long": 680085,
+            "medium": 36769,
+            "short": 30921
+          }
+        },
+        "overall": {
+          "long": 839705,
+          "medium": 46545,
+          "short": 38673
+        }
+      },
+      "release_name": "polymarket-decisive-belief-tau95",
+      "rows": 924923,
+      "schema_version": 1,
+      "source": "polymarket",
+      "split_audit": {
+        "family_overlap": {
+          "families_by_split": {
+            "test": 2149,
+            "train": 8914
+          },
+          "families_with_multiple_splits": 227,
+          "overlapping_family_ids_sample": [
+            "unknown::::10 year treasury yield hit 4",
+            "unknown::::2026 u s house election republican",
+            "unknown::::advanced micro devices amd beat quarterly",
+            "unknown::::agatha christie s seven dials 2",
+            "unknown::::al gore named newly released epstein",
+            "unknown::::alexandria ocasio cortez named newly released",
+            "unknown::::alphabet googl beat quarterly earnings",
+            "unknown::::american express axp beat quarterly earnings",
+            "unknown::::another 7 0 or above earthquake",
+            "unknown::::another mrbeast video get 100m week",
+            "unknown::::ant nio jos seguro win second",
+            "unknown::::anthropic have 3 ai model at",
+            "unknown::::anthropic have best ai model at",
+            "unknown::::anthropic have best ai model for",
+            "unknown::::anthropic have second best ai model",
+            "unknown::::anthropic have third best ai model",
+            "unknown::::anthropic have top ai model at",
+            "unknown::::anthropic run ad during super bowl",
+            "unknown::::any presidential candidate win outright first",
+            "unknown::::anyone charged over daycare fraud minnesota"
+          ],
+          "pairwise_family_overlap": {
+            "test__train": 227
+          }
+        },
+        "pairwise_unit_overlap": {
+          "test__train": 0
+        },
+        "rows_by_split": {
+          "test": 177148,
+          "train": 747775
+        },
+        "split_unit": "market_id",
+        "units_by_split": {
+          "test": 2692,
+          "train": 10768
+        },
+        "units_with_multiple_splits": 0
+      },
+      "split_counts": {
+        "test": 177148,
+        "train": 747775
+      },
+      "split_policy": {
+        "assignment_rule": "all cutoff examples derived from one market_id inherit a single market-level split",
+        "split_on": "decisive_timestamp_utc",
+        "split_unit": "market_id",
+        "timestamp_key_definition": "durable decisive timestamp when split_on=decisive_timestamp_utc; market end_date when split_on=end_date"
+      },
+      "target_columns": [
+        "market_id",
+        "cutoff_timestamp_utc",
+        "decisive_timestamp_utc",
+        "label",
+        "label_name",
+        "hours_to_decisive",
+        "decisive_side",
+        "split"
+      ],
+      "target_type": "ordinal decisive-horizon label plus continuous hours-to-decisive auxiliary target",
+      "task": "durable_decisive_belief_formation_prediction"
+    },
+    "repricing": {
+      "config": {
+        "attach_external_shocks": true,
+        "future_horizon_hours": 24,
+        "lookback_hours": 24,
+        "move_threshold": 0.15,
+        "sample_every_hours": 12,
+        "show_progress": true,
+        "split_on": "timestamp_utc",
+        "split_timestamp_utc": null,
+        "target_market_only": true,
+        "train_fraction": 0.8
+      },
+      "example_columns": [
+        "market_id",
+        "timestamp_utc",
+        "created_at",
+        "end_date",
+        "question",
+        "platform_category",
+        "research_category",
+        "family_id",
+        "future_horizon_hours",
+        "current_yes_probability",
+        "split"
+      ],
+      "families": 11374,
+      "future_horizon_hours": 24,
+      "label_stats": {
+        "by_split": {
+          "test": {
+            "positive_rate": 0.05174746812694251,
+            "rows": 94594
+          },
+          "train": {
+            "positive_rate": 0.016825945298286304,
+            "rows": 1221863
+          }
+        },
+        "overall": {
+          "positive_rate": 0.01933523085068483,
+          "rows": 1316457
+        }
+      },
+      "market_timeseries_columns": [
+        "market_id",
+        "timestamp_utc",
+        "yes_probability"
+      ],
+      "market_timeseries_rows": 206101450,
+      "markets": 13995,
+      "name": "repricing_benchmark",
+      "observable_information": "target market metadata and market-level probability history up to the prediction timestamp",
+      "release_name": "polymarket-repricing-24h",
+      "rows": 1316457,
+      "schema_version": 1,
+      "source": "polymarket",
+      "split_audit": {
+        "family_overlap": {
+          "families_by_split": {
+            "test": 2104,
+            "train": 9479
+          },
+          "families_with_multiple_splits": 209,
+          "overlapping_family_ids_sample": [
+            "unknown::::advanced micro devices amd beat quarterly",
+            "unknown::::al gore named newly released epstein",
+            "unknown::::alex honnold free solo taipei 101",
+            "unknown::::alexandria ocasio cortez named newly released",
+            "unknown::::alibaba have best ai model at",
+            "unknown::::alibaba have second best ai model",
+            "unknown::::alphabet googl beat quarterly earnings",
+            "unknown::::american express axp beat quarterly earnings",
+            "unknown::::andr ventura win 1st round 2026",
+            "unknown::::another 7 0 or above earthquake",
+            "unknown::::ant nio jos seguro win 1st",
+            "unknown::::anthropic have 2 ai model at",
+            "unknown::::anthropic have 3 ai model at",
+            "unknown::::anthropic have best ai model at",
+            "unknown::::anthropic have second best ai model",
+            "unknown::::anthropic have third best ai model",
+            "unknown::::anthropic run ad during super bowl",
+            "unknown::::any presidential candidate win outright first",
+            "unknown::::apple aapl beat quarterly earnings",
+            "unknown::::apple run ad during super bowl"
+          ],
+          "pairwise_family_overlap": {
+            "test__train": 209
+          }
+        },
+        "pairwise_unit_overlap": {
+          "test__train": 0
+        },
+        "rows_by_split": {
+          "test": 94594,
+          "train": 1221863
+        },
+        "split_unit": "market_id",
+        "units_by_split": {
+          "test": 2801,
+          "train": 11194
+        },
+        "units_with_multiple_splits": 0
+      },
+      "split_counts": {
+        "test": 94594,
+        "train": 1221863
+      },
+      "split_policy": {
+        "assignment_rule": "all rolling repricing windows derived from one market_id inherit a single market-level split",
+        "split_on": "timestamp_utc",
+        "split_unit": "market_id",
+        "timestamp_key_definition": "first admissible repricing timestamp when split_on=timestamp_utc; market end_date when split_on=end_date"
+      },
+      "target_columns": [
+        "market_id",
+        "timestamp_utc",
+        "future_horizon_hours",
+        "label",
+        "future_move",
+        "split"
+      ],
+      "target_type": "large future repricing indicator",
+      "task": "large_future_repricing_prediction"
+    },
+    "terminal": {
+      "config": {
+        "horizons_hours": [
+          24,
+          72,
+          168
+        ],
+        "max_snapshot_staleness_hours": 12.0,
+        "max_snapshot_staleness_hours_by_horizon": {
+          "168": 24.0,
+          "24": 12.0,
+          "336": 48.0
+        },
+        "show_progress": true,
+        "split_on": "end_date",
+        "split_timestamp_utc": null,
+        "train_fraction": 0.8
+      },
+      "example_columns": [
+        "market_id",
+        "market_slug",
+        "question",
+        "created_at",
+        "end_date",
+        "platform_category",
+        "research_category",
+        "family_id",
+        "horizon_hours",
+        "cutoff_timestamp_utc",
+        "prefix_rows",
+        "cutoff_age_hours",
+        "current_yes_probability",
+        "current_probability_timestamp_utc",
+        "current_probability_staleness_hours",
+        "split"
+      ],
+      "families": 9128,
+      "horizons_hours": [
+        24,
+        72,
+        168
+      ],
+      "label_stats": {
+        "by_split": {
+          "test": {
+            "positive_rate": 0.23969117389015618,
+            "rows": 5699
+          },
+          "train": {
+            "positive_rate": 0.2122241835834069,
+            "rows": 22660
+          }
+        },
+        "overall": {
+          "positive_rate": 0.21774392609048274,
+          "rows": 28359
+        }
+      },
+      "market_timeseries_columns": [
+        "market_id",
+        "timestamp_utc",
+        "yes_probability"
+      ],
+      "market_timeseries_rows": 156568928,
+      "markets": 11381,
+      "name": "terminal_benchmark",
+      "observable_information": "target market metadata and market-level probability history up to cutoff",
+      "release_name": "polymarket-terminal-24h-72h-168h",
+      "rows": 28359,
+      "rows_by_horizon_and_split": {
+        "test": {
+          "168": 1784,
+          "24": 1938,
+          "72": 1977
+        },
+        "train": {
+          "168": 6614,
+          "24": 8218,
+          "72": 7828
+        }
+      },
+      "schema_version": 1,
+      "source": "polymarket",
+      "split_audit": {
+        "family_overlap": {
+          "families_by_split": {
+            "test": 1781,
+            "train": 7540
+          },
+          "families_with_multiple_splits": 193,
+          "overlapping_family_ids_sample": [
+            "unknown::::10 year treasury yield hit 4",
+            "unknown::::10 year treasury yield hit 5",
+            "unknown::::advanced micro devices amd beat quarterly",
+            "unknown::::alibaba have best ai model at",
+            "unknown::::alibaba have best ai model for",
+            "unknown::::alibaba have second best ai model",
+            "unknown::::alibaba have third best ai model",
+            "unknown::::alibaba have top ai model at",
+            "unknown::::alphabet googl beat quarterly earnings",
+            "unknown::::anthropic have 3 ai model at",
+            "unknown::::anthropic have best ai model at",
+            "unknown::::anthropic have best ai model for",
+            "unknown::::anthropic have second best ai model",
+            "unknown::::anthropic have third best ai model",
+            "unknown::::anthropic have top ai model at",
+            "unknown::::anthropic run ad during super bowl",
+            "unknown::::any presidential candidate win outright first",
+            "unknown::::apple run ad during super bowl",
+            "unknown::::aryna sabalenka win 2026 women s",
+            "unknown::::baidu have best ai model at"
+          ],
+          "pairwise_family_overlap": {
+            "test__train": 193
+          }
+        },
+        "pairwise_unit_overlap": {
+          "test__train": 0
+        },
+        "rows_by_split": {
+          "test": 5699,
+          "train": 22660
+        },
+        "split_unit": "market_id",
+        "units_by_split": {
+          "test": 2196,
+          "train": 9185
+        },
+        "units_with_multiple_splits": 0
+      },
+      "split_counts": {
+        "test": 5699,
+        "train": 22660
+      },
+      "split_policy": {
+        "assignment_rule": "all horizons derived from one market_id inherit the market-level split computed from a single timestamp key",
+        "split_on": "end_date",
+        "split_unit": "market_id",
+        "timestamp_key_definition": "market end_date when split_on=end_date; market cutoff timestamp when split_on=cutoff_timestamp_utc"
+      },
+      "target_columns": [
+        "market_id",
+        "horizon_hours",
+        "label",
+        "split"
+      ],
+      "target_type": "final resolved outcome",
+      "task": "terminal_outcome_prediction"
+    }
+  },
+  "canonical_summary": {
+    "download_status_rows": 17247,
+    "external_covariates_rows": 263808,
+    "markets": 15662,
+    "probability_rows": 208040673,
+    "research_category_counts": {},
+    "unique_families": 12697
+  },
+  "db_path": "db/resolved_probability_dataset.sqlite",
+  "generated_at_utc": "2026-04-27T10:59:49Z",
+  "schema_version": 1,
+  "selection_funnel": {
+    "available": true,
+    "notes": [
+      "The final delta from without_short_horizon_updown to selected_markets_registry includes remaining semantic/tag exclusions from the persisted Polymarket registry selection step."
+    ],
+    "selection_versions": null,
+    "stages": [
+      {
+        "name": "market_universe",
+        "rows": 732998
+      },
+      {
+        "name": "resolved_binary_candidates",
+        "rows": 226916
+      },
+      {
+        "name": "with_clob_token_ids",
+        "rows": 226916
+      },
+      {
+        "name": "without_short_horizon_updown",
+        "rows": 226916
+      },
+      {
+        "name": "selected_markets_registry",
+        "rows": 17247
+      }
+    ]
+  },
+  "source": "polymarket",
+  "task_outputs": {
+    "decisiveness": {
+      "bundle_dir": "/Users/sneddy/research/polymarket_research/benchmark_releases/polymarket/decisiveness/v1",
+      "manifest_file": "/Users/sneddy/research/polymarket_research/benchmark_releases/polymarket/decisiveness/v1/manifest.json",
+      "materialization": {
+        "market_timeseries_rows": 176867529,
+        "markets": 13460,
+        "rows": 924923
+      }
+    },
+    "repricing": {
+      "bundle_dir": "/Users/sneddy/research/polymarket_research/benchmark_releases/polymarket/repricing/v1",
+      "manifest_file": "/Users/sneddy/research/polymarket_research/benchmark_releases/polymarket/repricing/v1/manifest.json",
+      "materialization": {
+        "market_timeseries_rows": 206101450,
+        "markets": 13995,
+        "rows": 1316457
+      }
+    },
+    "terminal": {
+      "bundle_dir": "/Users/sneddy/research/polymarket_research/benchmark_releases/polymarket/terminal/v1",
+      "manifest_file": "/Users/sneddy/research/polymarket_research/benchmark_releases/polymarket/terminal/v1/manifest.json",
+      "materialization": {
+        "market_timeseries_rows": 156568928,
+        "markets": 11381,
+        "rows": 28359
+      }
+    }
+  },
+  "version": "v1"
+}

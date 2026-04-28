@@ -111,127 +111,6 @@ class CanonicalDataset:
             download_status=download_status,
         )
 
-    def repricing_panel(
-        self,
-        *,
-        future_horizon_hours: int = 24,
-        lookback_hours: int = 24,
-        sample_every_hours: int = 12,
-        move_threshold: float = 0.15,
-        attach_external_shocks: bool = True,
-        show_progress: bool = False,
-    ):
-        """Build the repricing representation frame directly from this canonical dataset."""
-        from polymarket_research.data.representations.repricing import RepricingPanelBuilder
-
-        return RepricingPanelBuilder(
-            canonical=self,
-            future_horizon_hours=future_horizon_hours,
-            lookback_hours=lookback_hours,
-            sample_every_hours=sample_every_hours,
-            move_threshold=move_threshold,
-            attach_external_shocks=attach_external_shocks,
-            show_progress=show_progress,
-        ).build()
-
-    def decisiveness_benchmark_view(
-        self,
-        *,
-        decisive_threshold: float = 0.95,
-        sample_every_hours: int = 12,
-        min_history_points: int = 24,
-        min_prefix_age_hours: float = 6.0,
-        min_time_to_decisive_hours: float = 1.0,
-        ordinal_bin_edges_hours: tuple[float, ...] = (24.0, 72.0),
-        ordinal_bin_labels: tuple[str, ...] = ("short", "medium", "long"),
-        target_market_only: bool = True,
-        split_on: str = "decisive_timestamp_utc",
-        split_timestamp_utc: pd.Timestamp | None = None,
-        train_fraction: float = 0.8,
-        show_progress: bool = False,
-        examples=None,
-    ):
-        """Build the frozen durable-decisiveness benchmark view from this canonical dataset."""
-        from polymarket_research.views import DecisivenessBenchmarkView
-
-        return DecisivenessBenchmarkView.from_canonical(
-            self,
-            decisive_threshold=decisive_threshold,
-            sample_every_hours=sample_every_hours,
-            min_history_points=min_history_points,
-            min_prefix_age_hours=min_prefix_age_hours,
-            min_time_to_decisive_hours=min_time_to_decisive_hours,
-            ordinal_bin_edges_hours=ordinal_bin_edges_hours,
-            ordinal_bin_labels=ordinal_bin_labels,
-            target_market_only=target_market_only,
-            split_on=split_on,
-            split_timestamp_utc=split_timestamp_utc,
-            train_fraction=train_fraction,
-            show_progress=show_progress,
-            examples=examples,
-        )
-
-    def decisiveness_benchmark(
-        self,
-        *,
-        config=None,
-    ):
-        """Build the protocol-first decisiveness benchmark object from this canonical dataset."""
-        from polymarket_research.benchmarks import DecisivenessBenchmark
-
-        return DecisivenessBenchmark.build(self, config=config)
-
-    def repricing_benchmark_view(
-        self,
-        *,
-        future_horizon_hours: int = 24,
-        lookback_hours: int = 24,
-        sample_every_hours: int = 12,
-        move_threshold: float = 0.15,
-        attach_external_shocks: bool = True,
-        show_progress: bool = False,
-        examples=None,
-    ):
-        """Build the frozen repricing benchmark view from this canonical dataset."""
-        from polymarket_research.views import RepricingBenchmarkView
-
-        return RepricingBenchmarkView.from_canonical(
-            self,
-            future_horizon_hours=future_horizon_hours,
-            lookback_hours=lookback_hours,
-            sample_every_hours=sample_every_hours,
-            move_threshold=move_threshold,
-            attach_external_shocks=attach_external_shocks,
-            show_progress=show_progress,
-            examples=examples,
-        )
-
-    def repricing_benchmark(
-        self,
-        *,
-        config=None,
-    ):
-        """Build the protocol-first repricing benchmark object from this canonical dataset."""
-        from polymarket_research.benchmarks import RepricingBenchmark
-
-        return RepricingBenchmark.build(self, config=config)
-
-    def decisiveness_ml_benchmark(
-        self,
-        *,
-        config=None,
-    ):
-        """Build a tabular decisiveness benchmark for standard ML workflows."""
-        return self.decisiveness_benchmark(config=config).tabular()
-
-    def repricing_ml_benchmark(
-        self,
-        *,
-        config=None,
-    ):
-        """Build a tabular repricing benchmark for standard ML workflows."""
-        return self.repricing_benchmark(config=config).tabular()
-
 
 @dataclass
 class CanonicalDatasetBuilder:
@@ -240,21 +119,38 @@ class CanonicalDatasetBuilder:
     raw_dataset: RawMarketBundle
     raw_external: RawExternalCovariates | None = None
     resolved_only: bool = True
+    show_progress: bool = False
+
+    def _log(self, message: str) -> None:
+        if self.show_progress:
+            print(f"[canonical builder] {message}")
 
     def build(self) -> CanonicalDataset:
         """Build the canonical dataset from the configured raw sources."""
+        self._log("start")
         raw_markets = self.raw_dataset.selected_markets
         if self.resolved_only and raw_markets is not None and "resolved" in raw_markets.columns:
+            self._log("filtering selected markets to resolved_only")
             raw_markets = raw_markets.loc[raw_markets["resolved"].fillna(False)].reset_index(drop=True)
 
+        self._log("canonicalizing markets")
         markets = self.canonicalize_markets(raw_markets)
+        self._log(f"markets ready rows={len(markets)}")
+        self._log("canonicalizing probabilities")
         probabilities = self.canonicalize_probabilities(self.raw_dataset.probabilities, allowed_market_ids=markets["market_id"])
+        self._log(f"probabilities ready rows={len(probabilities)}")
         external_covariates = None
         if self.raw_external is not None:
             if not self.raw_external.is_loaded:
+                self._log("loading external covariates")
                 self.raw_external.load()
+            self._log("canonicalizing external covariates")
             external_covariates = self.canonicalize_external_covariates(self.raw_external.covariates)
+            self._log(f"external covariates ready rows={len(external_covariates)}")
+        self._log("building download status")
         download_status = self.build_download_status(self.raw_dataset)
+        self._log(f"download status ready rows={len(download_status)}")
+        self._log("done")
         return CanonicalDataset(
             markets=markets,
             probabilities=probabilities,

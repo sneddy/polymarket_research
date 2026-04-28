@@ -1,0 +1,125 @@
+{
+  "config": {
+    "attach_external_shocks": true,
+    "future_horizon_hours": 24,
+    "lookback_hours": 24,
+    "move_threshold": 0.15,
+    "sample_every_hours": 12,
+    "show_progress": true,
+    "split_on": "timestamp_utc",
+    "split_timestamp_utc": null,
+    "target_market_only": true,
+    "train_fraction": 0.8
+  },
+  "example_columns": [
+    "market_id",
+    "timestamp_utc",
+    "created_at",
+    "end_date",
+    "question",
+    "platform_category",
+    "research_category",
+    "family_id",
+    "future_horizon_hours",
+    "current_yes_probability",
+    "split"
+  ],
+  "families": 4405,
+  "future_horizon_hours": 24,
+  "label_stats": {
+    "by_split": {
+      "test": {
+        "positive_rate": 0.07002958770180742,
+        "rows": 62188
+      },
+      "train": {
+        "positive_rate": 0.014543038479496496,
+        "rows": 1321457
+      }
+    },
+    "overall": {
+      "positive_rate": 0.01703688446097084,
+      "rows": 1383645
+    }
+  },
+  "market_timeseries_columns": [
+    "market_id",
+    "timestamp_utc",
+    "yes_probability"
+  ],
+  "market_timeseries_rows": 203314679,
+  "markets": 8026,
+  "name": "repricing_benchmark",
+  "observable_information": "target market metadata and market-level probability history up to the prediction timestamp",
+  "release_name": "kalshi-repricing-24h",
+  "rows": 1383645,
+  "schema_version": 1,
+  "source": "kalshi",
+  "split_audit": {
+    "family_overlap": {
+      "families_by_split": {
+        "test": 862,
+        "train": 3684
+      },
+      "families_with_multiple_splits": 141,
+      "overlapping_family_ids_sample": [
+        "unknown::::1 show on netflix have at",
+        "unknown::::2 us netflix movie on jan",
+        "unknown::::2 us netflix show on jan",
+        "unknown::::28 years later bone temple rotten",
+        "unknown::::alex warren 1 on any spotify",
+        "unknown::::ali khamenei leave office before 2026",
+        "unknown::::any individual connection with minnesota daycare",
+        "unknown::::any member trump s cabinet leave",
+        "unknown::::artist with most monthly spotify listeners",
+        "unknown::::avatar fire and ash win best",
+        "unknown::::average gas prices above 2 825",
+        "unknown::::average gas prices above 2 855",
+        "unknown::::average gas prices above 2 90",
+        "unknown::::average gas prices above 2 95",
+        "unknown::::average gas prices above 3 00",
+        "unknown::::average gas prices above 3 018",
+        "unknown::::average gas prices above 3 05",
+        "unknown::::average gas prices above 3 10",
+        "unknown::::average gas prices above 3 15",
+        "unknown::::average gas prices above 3 20"
+      ],
+      "pairwise_family_overlap": {
+        "test__train": 141
+      }
+    },
+    "pairwise_unit_overlap": {
+      "test__train": 0
+    },
+    "rows_by_split": {
+      "test": 62188,
+      "train": 1321457
+    },
+    "split_unit": "market_id",
+    "units_by_split": {
+      "test": 1607,
+      "train": 6419
+    },
+    "units_with_multiple_splits": 0
+  },
+  "split_counts": {
+    "test": 62188,
+    "train": 1321457
+  },
+  "split_policy": {
+    "assignment_rule": "all rolling repricing windows derived from one market_id inherit a single market-level split",
+    "split_on": "timestamp_utc",
+    "split_unit": "market_id",
+    "timestamp_key_definition": "first admissible repricing timestamp when split_on=timestamp_utc; market end_date when split_on=end_date"
+  },
+  "target_columns": [
+    "market_id",
+    "timestamp_utc",
+    "future_horizon_hours",
+    "label",
+    "future_move",
+    "split"
+  ],
+  "target_type": "large future repricing indicator",
+  "task": "large_future_repricing_prediction"
+}

@@ -1,0 +1,162 @@
+# Polymarket Terminal Benchmark
+
+Source: `polymarket`
+Release: `polymarket-terminal-24h-72h-168h`
+Examples: 28424
+Market-timeseries rows: 156577865
+Split policy: `end_date`
+
+## Files
+- `manifest.json`
+- `examples.parquet`
+- `market_timeseries.parquet`
+- `targets.parquet`
+
+## Manifest
+```json
+{
+  "config": {
+    "horizons_hours": [
+      24,
+      72,
+      168
+    ],
+    "max_snapshot_staleness_hours": 12.0,
+    "max_snapshot_staleness_hours_by_horizon": {
+      "168": 24.0,
+      "24": 12.0,
+      "72": 18.0
+    },
+    "show_progress": true,
+    "split_on": "end_date",
+    "split_timestamp_utc": null,
+    "train_fraction": 0.8
+  },
+  "example_columns": [
+    "market_id",
+    "market_slug",
+    "question",
+    "created_at",
+    "end_date",
+    "platform_category",
+    "research_category",
+    "family_id",
+    "horizon_hours",
+    "cutoff_timestamp_utc",
+    "label",
+    "split"
+  ],
+  "families": 9137,
+  "horizons_hours": [
+    24,
+    72,
+    168
+  ],
+  "label_stats": {
+    "by_split": {
+      "test": {
+        "positive_rate": 0.23953773419716337,
+        "rows": 5711
+      },
+      "train": {
+        "positive_rate": 0.21252146347906486,
+        "rows": 22713
+      }
+    },
+    "overall": {
+      "positive_rate": 0.21794962003940332,
+      "rows": 28424
+    }
+  },
+  "market_timeseries_columns": [
+    "market_id",
+    "timestamp_utc",
+    "yes_probability"
+  ],
+  "market_timeseries_rows": 156577865,
+  "markets": 11397,
+  "name": "terminal_benchmark",
+  "observable_information": "target market metadata and market-level probability history up to cutoff",
+  "release_name": "polymarket-terminal-24h-72h-168h",
+  "rows": 28424,
+  "rows_by_horizon_and_split": {
+    "test": {
+      "168": 1784,
+      "24": 1938,
+      "72": 1989
+    },
+    "train": {
+      "168": 6614,
+      "24": 8218,
+      "72": 7881
+    }
+  },
+  "schema_version": 1,
+  "source": "polymarket",
+  "split_audit": {
+    "family_overlap": {
+      "families_by_split": {
+        "test": 1784,
+        "train": 7546
+      },
+      "families_with_multiple_splits": 193,
+      "overlapping_family_ids_sample": [
+        "unknown::::10 year treasury yield hit 4",
+        "unknown::::10 year treasury yield hit 5",
+        "unknown::::advanced micro devices amd beat quarterly",
+        "unknown::::alibaba have best ai model at",
+        "unknown::::alibaba have best ai model for",
+        "unknown::::alibaba have second best ai model",
+        "unknown::::alibaba have third best ai model",
+        "unknown::::alibaba have top ai model at",
+        "unknown::::alphabet googl beat quarterly earnings",
+        "unknown::::anthropic have 3 ai model at",
+        "unknown::::anthropic have best ai model at",
+        "unknown::::anthropic have best ai model for",
+        "unknown::::anthropic have second best ai model",
+        "unknown::::anthropic have third best ai model",
+        "unknown::::anthropic have top ai model at",
+        "unknown::::anthropic run ad during super bowl",
+        "unknown::::any presidential candidate win outright first",
+        "unknown::::apple run ad during super bowl",
+        "unknown::::aryna sabalenka win 2026 women s",
+        "unknown::::baidu have best ai model at"
+      ],
+      "pairwise_family_overlap": {
+        "test__train": 193
+      }
+    },
+    "pairwise_unit_overlap": {
+      "test__train": 0
+    },
+    "rows_by_split": {
+      "test": 5711,
+      "train": 22713
+    },
+    "split_unit": "market_id",
+    "units_by_split": {
+      "test": 2202,
+      "train": 9195
+    },
+    "units_with_multiple_splits": 0
+  },
+  "split_counts": {
+    "test": 5711,
+    "train": 22713
+  },
+  "split_policy": {
+    "assignment_rule": "all horizons derived from one market_id inherit the market-level split computed from a single timestamp key",
+    "split_on": "end_date",
+    "split_unit": "market_id",
+    "timestamp_key_definition": "market end_date when split_on=end_date; market cutoff timestamp when split_on=cutoff_timestamp_utc"
+  },
+  "target_columns": [
+    "market_id",
+    "horizon_hours",
+    "label",
+    "split"
+  ],
+  "target_type": "final resolved outcome",
+  "task": "terminal_outcome_prediction"
+}
+```

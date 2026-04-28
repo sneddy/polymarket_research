@@ -1,0 +1,539 @@
+{
+  "benchmark_manifests": {
+    "decisiveness": {
+      "config": {
+        "decisive_threshold": 0.95,
+        "min_history_points": 24,
+        "min_prefix_age_hours": 6.0,
+        "min_time_to_decisive_hours": 1.0,
+        "ordinal_bin_edges_hours": [
+          24.0,
+          72.0
+        ],
+        "ordinal_bin_labels": [
+          "short",
+          "medium",
+          "long"
+        ],
+        "sample_every_hours": 12,
+        "show_progress": true,
+        "split_on": "decisive_timestamp_utc",
+        "split_timestamp_utc": null,
+        "target_market_only": true,
+        "train_fraction": 0.8
+      },
+      "decisive_side_distribution": {
+        "by_split": {
+          "test": {
+            "no": 65295,
+            "yes": 41768
+          },
+          "train": {
+            "no": 653748,
+            "yes": 247277
+          }
+        },
+        "overall": {
+          "no": 719043,
+          "yes": 289045
+        }
+      },
+      "example_columns": [
+        "market_id",
+        "cutoff_timestamp_utc",
+        "market_slug",
+        "question",
+        "created_at",
+        "end_date",
+        "platform_category",
+        "research_category",
+        "family_id",
+        "prefix_rows",
+        "cutoff_age_hours",
+        "current_yes_probability",
+        "confidence_margin",
+        "distance_to_yes_decisive",
+        "distance_to_no_decisive",
+        "decisive_threshold",
+        "split"
+      ],
+      "families": 3964,
+      "market_timeseries_columns": [
+        "market_id",
+        "timestamp_utc",
+        "yes_probability"
+      ],
+      "market_timeseries_rows": 179840929,
+      "markets": 6710,
+      "name": "decisiveness_benchmark",
+      "observable_information": "target market metadata and market-level probability history up to the cutoff timestamp",
+      "ordinal_bin_edges_hours": [
+        24.0,
+        72.0
+      ],
+      "ordinal_bin_labels": [
+        "short",
+        "medium",
+        "long"
+      ],
+      "ordinal_label_distribution": {
+        "by_split": {
+          "test": {
+            "long": 98196,
+            "medium": 4968,
+            "short": 3899
+          },
+          "train": {
+            "long": 864830,
+            "medium": 20605,
+            "short": 15590
+          }
+        },
+        "overall": {
+          "long": 963026,
+          "medium": 25573,
+          "short": 19489
+        }
+      },
+      "release_name": "kalshi-decisive-belief-tau95",
+      "rows": 1008088,
+      "schema_version": 1,
+      "source": "kalshi",
+      "split_audit": {
+        "family_overlap": {
+          "families_by_split": {
+            "test": 811,
+            "train": 3267
+          },
+          "families_with_multiple_splits": 114,
+          "overlapping_family_ids_sample": [
+            "unknown::::2 us netflix movie on feb",
+            "unknown::::2 us netflix show on feb",
+            "unknown::::any individual connection with minnesota daycare",
+            "unknown::::any member trump s cabinet leave",
+            "unknown::::aperture 1 on billboard hot 100",
+            "unknown::::artist with most monthly spotify listeners",
+            "unknown::::average gas prices above 2 90",
+            "unknown::::average gas prices above 2 95",
+            "unknown::::average gas prices above 3 00",
+            "unknown::::average gas prices above 3 018",
+            "unknown::::average gas prices above 3 05",
+            "unknown::::average gas prices above 3 10",
+            "unknown::::average gas prices above 3 15",
+            "unknown::::average gas prices above 3 20",
+            "unknown::::average gas prices above 3 220",
+            "unknown::::average gas prices above 3 30",
+            "unknown::::average gas prices above 3 35",
+            "unknown::::average gas prices above 3 40",
+            "unknown::::average gas prices above 4 60",
+            "unknown::::average gas prices above 4 70"
+          ],
+          "pairwise_family_overlap": {
+            "test__train": 114
+          }
+        },
+        "pairwise_unit_overlap": {
+          "test__train": 0
+        },
+        "rows_by_split": {
+          "test": 107063,
+          "train": 901025
+        },
+        "split_unit": "market_id",
+        "units_by_split": {
+          "test": 1342,
+          "train": 5368
+        },
+        "units_with_multiple_splits": 0
+      },
+      "split_counts": {
+        "test": 107063,
+        "train": 901025
+      },
+      "split_policy": {
+        "assignment_rule": "all cutoff examples derived from one market_id inherit a single market-level split",
+        "split_on": "decisive_timestamp_utc",
+        "split_unit": "market_id",
+        "timestamp_key_definition": "durable decisive timestamp when split_on=decisive_timestamp_utc; market end_date when split_on=end_date"
+      },
+      "target_columns": [
+        "market_id",
+        "cutoff_timestamp_utc",
+        "decisive_timestamp_utc",
+        "label",
+        "label_name",
+        "hours_to_decisive",
+        "decisive_side",
+        "split"
+      ],
+      "target_type": "ordinal decisive-horizon label plus continuous hours-to-decisive auxiliary target",
+      "task": "durable_decisive_belief_formation_prediction"
+    },
+    "repricing": {
+      "config": {
+        "attach_external_shocks": true,
+        "future_horizon_hours": 24,
+        "lookback_hours": 24,
+        "move_threshold": 0.15,
+        "sample_every_hours": 12,
+        "show_progress": true,
+        "split_on": "timestamp_utc",
+        "split_timestamp_utc": null,
+        "target_market_only": true,
+        "train_fraction": 0.8
+      },
+      "example_columns": [
+        "market_id",
+        "timestamp_utc",
+        "created_at",
+        "end_date",
+        "question",
+        "platform_category",
+        "research_category",
+        "family_id",
+        "future_horizon_hours",
+        "current_yes_probability",
+        "split"
+      ],
+      "families": 4405,
+      "future_horizon_hours": 24,
+      "label_stats": {
+        "by_split": {
+          "test": {
+            "positive_rate": 0.07002958770180742,
+            "rows": 62188
+          },
+          "train": {
+            "positive_rate": 0.014543038479496496,
+            "rows": 1321457
+          }
+        },
+        "overall": {
+          "positive_rate": 0.01703688446097084,
+          "rows": 1383645
+        }
+      },
+      "market_timeseries_columns": [
+        "market_id",
+        "timestamp_utc",
+        "yes_probability"
+      ],
+      "market_timeseries_rows": 203314679,
+      "markets": 8026,
+      "name": "repricing_benchmark",
+      "observable_information": "target market metadata and market-level probability history up to the prediction timestamp",
+      "release_name": "kalshi-repricing-24h",
+      "rows": 1383645,
+      "schema_version": 1,
+      "source": "kalshi",
+      "split_audit": {
+        "family_overlap": {
+          "families_by_split": {
+            "test": 862,
+            "train": 3684
+          },
+          "families_with_multiple_splits": 141,
+          "overlapping_family_ids_sample": [
+            "unknown::::1 show on netflix have at",
+            "unknown::::2 us netflix movie on jan",
+            "unknown::::2 us netflix show on jan",
+            "unknown::::28 years later bone temple rotten",
+            "unknown::::alex warren 1 on any spotify",
+            "unknown::::ali khamenei leave office before 2026",
+            "unknown::::any individual connection with minnesota daycare",
+            "unknown::::any member trump s cabinet leave",
+            "unknown::::artist with most monthly spotify listeners",
+            "unknown::::avatar fire and ash win best",
+            "unknown::::average gas prices above 2 825",
+            "unknown::::average gas prices above 2 855",
+            "unknown::::average gas prices above 2 90",
+            "unknown::::average gas prices above 2 95",
+            "unknown::::average gas prices above 3 00",
+            "unknown::::average gas prices above 3 018",
+            "unknown::::average gas prices above 3 05",
+            "unknown::::average gas prices above 3 10",
+            "unknown::::average gas prices above 3 15",
+            "unknown::::average gas prices above 3 20"
+          ],
+          "pairwise_family_overlap": {
+            "test__train": 141
+          }
+        },
+        "pairwise_unit_overlap": {
+          "test__train": 0
+        },
+        "rows_by_split": {
+          "test": 62188,
+          "train": 1321457
+        },
+        "split_unit": "market_id",
+        "units_by_split": {
+          "test": 1607,
+          "train": 6419
+        },
+        "units_with_multiple_splits": 0
+      },
+      "split_counts": {
+        "test": 62188,
+        "train": 1321457
+      },
+      "split_policy": {
+        "assignment_rule": "all rolling repricing windows derived from one market_id inherit a single market-level split",
+        "split_on": "timestamp_utc",
+        "split_unit": "market_id",
+        "timestamp_key_definition": "first admissible repricing timestamp when split_on=timestamp_utc; market end_date when split_on=end_date"
+      },
+      "target_columns": [
+        "market_id",
+        "timestamp_utc",
+        "future_horizon_hours",
+        "label",
+        "future_move",
+        "split"
+      ],
+      "target_type": "large future repricing indicator",
+      "task": "large_future_repricing_prediction"
+    },
+    "terminal": {
+      "config": {
+        "horizons_hours": [
+          24,
+          72,
+          168
+        ],
+        "max_snapshot_staleness_hours": 12.0,
+        "max_snapshot_staleness_hours_by_horizon": {
+          "168": 24.0,
+          "24": 12.0,
+          "336": 48.0
+        },
+        "show_progress": true,
+        "split_on": "end_date",
+        "split_timestamp_utc": null,
+        "train_fraction": 0.8
+      },
+      "example_columns": [
+        "market_id",
+        "market_slug",
+        "question",
+        "created_at",
+        "end_date",
+        "platform_category",
+        "research_category",
+        "family_id",
+        "horizon_hours",
+        "cutoff_timestamp_utc",
+        "prefix_rows",
+        "cutoff_age_hours",
+        "current_yes_probability",
+        "current_probability_timestamp_utc",
+        "current_probability_staleness_hours",
+        "split"
+      ],
+      "families": 1671,
+      "horizons_hours": [
+        24,
+        72,
+        168
+      ],
+      "label_stats": {
+        "by_split": {
+          "test": {
+            "positive_rate": 0.26715686274509803,
+            "rows": 1224
+          },
+          "train": {
+            "positive_rate": 0.21692905336332038,
+            "rows": 4891
+          }
+        },
+        "overall": {
+          "positive_rate": 0.22698282910874898,
+          "rows": 6115
+        }
+      },
+      "market_timeseries_columns": [
+        "market_id",
+        "timestamp_utc",
+        "yes_probability"
+      ],
+      "market_timeseries_rows": 94203240,
+      "markets": 3480,
+      "name": "terminal_benchmark",
+      "observable_information": "target market metadata and market-level probability history up to cutoff",
+      "release_name": "kalshi-terminal-24h-72h-168h",
+      "rows": 6115,
+      "rows_by_horizon_and_split": {
+        "test": {
+          "168": 820,
+          "24": 200,
+          "72": 204
+        },
+        "train": {
+          "168": 2531,
+          "24": 1182,
+          "72": 1178
+        }
+      },
+      "schema_version": 1,
+      "source": "kalshi",
+      "split_audit": {
+        "family_overlap": {
+          "families_by_split": {
+            "test": 466,
+            "train": 1265
+          },
+          "families_with_multiple_splits": 60,
+          "overlapping_family_ids_sample": [
+            "unknown::::2 us netflix movie on feb",
+            "unknown::::2 us netflix show on feb",
+            "unknown::::ali khamenei leave office before 2026",
+            "unknown::::any individual connection with minnesota daycare",
+            "unknown::::any member trump s cabinet leave",
+            "unknown::::artist with most monthly spotify listeners",
+            "unknown::::average gas prices above 2 90",
+            "unknown::::average gas prices above 2 95",
+            "unknown::::average gas prices above 3 00",
+            "unknown::::average gas prices above 3 05",
+            "unknown::::average gas prices above 3 10",
+            "unknown::::average gas prices above 3 15",
+            "unknown::::average gas prices above 3 20",
+            "unknown::::average gas prices above 3 30",
+            "unknown::::average gas prices above 3 40",
+            "unknown::::average gas prices above 3 50",
+            "unknown::::average gas prices above 4 30",
+            "unknown::::average gas prices above 4 60",
+            "unknown::::average gas prices above 4 70",
+            "unknown::::average gas prices above 4 90"
+          ],
+          "pairwise_family_overlap": {
+            "test__train": 60
+          }
+        },
+        "pairwise_unit_overlap": {
+          "test__train": 0
+        },
+        "rows_by_split": {
+          "test": 1224,
+          "train": 4891
+        },
+        "split_unit": "market_id",
+        "units_by_split": {
+          "test": 846,
+          "train": 2634
+        },
+        "units_with_multiple_splits": 0
+      },
+      "split_counts": {
+        "test": 1224,
+        "train": 4891
+      },
+      "split_policy": {
+        "assignment_rule": "all horizons derived from one market_id inherit the market-level split computed from a single timestamp key",
+        "split_on": "end_date",
+        "split_unit": "market_id",
+        "timestamp_key_definition": "market end_date when split_on=end_date; market cutoff timestamp when split_on=cutoff_timestamp_utc"
+      },
+      "target_columns": [
+        "market_id",
+        "horizon_hours",
+        "label",
+        "split"
+      ],
+      "target_type": "final resolved outcome",
+      "task": "terminal_outcome_prediction"
+    }
+  },
+  "canonical_summary": {
+    "download_status_rows": 8140,
+    "external_covariates_rows": 263808,
+    "markets": 8140,
+    "probability_rows": 203353576,
+    "research_category_counts": {},
+    "unique_families": 4483
+  },
+  "db_path": "db/kalshi_probability_dataset.sqlite",
+  "generated_at_utc": "2026-04-27T14:16:48Z",
+  "schema_version": 1,
+  "selection_funnel": {
+    "available": true,
+    "market_stages": [
+      {
+        "name": "raw_markets",
+        "rows": 60161
+      },
+      {
+        "name": "binary_markets",
+        "rows": 60161
+      },
+      {
+        "name": "binary_and_volume_gte_20000",
+        "rows": 8140
+      },
+      {
+        "name": "selected_markets_registry",
+        "rows": 8140
+      }
+    ],
+    "notes": [],
+    "selected_markets_versions": [
+      "v2_binary_and_min_volume"
+    ],
+    "selected_series_versions": [
+      "v2_drop_short_frequencies_then_allow_categories_and_deny_short_term"
+    ],
+    "series_stages": [
+      {
+        "name": "raw_series",
+        "rows": 9721
+      },
+      {
+        "name": "allowed_frequency",
+        "rows": 9487
+      },
+      {
+        "name": "allowed_frequency_and_category",
+        "rows": 6905
+      },
+      {
+        "name": "allowed_frequency_category_and_title",
+        "rows": 6232
+      },
+      {
+        "name": "selected_series_registry",
+        "rows": 6232
+      }
+    ]
+  },
+  "source": "kalshi",
+  "task_outputs": {
+    "decisiveness": {
+      "bundle_dir": "/Users/sneddy/research/polymarket_research/benchmark_releases/kalshi/decisiveness/v1",
+      "manifest_file": "/Users/sneddy/research/polymarket_research/benchmark_releases/kalshi/decisiveness/v1/manifest.json",
+      "materialization": {
+        "market_timeseries_rows": 179840929,
+        "markets": 6710,
+        "rows": 1008088
+      }
+    },
+    "repricing": {
+      "bundle_dir": "/Users/sneddy/research/polymarket_research/benchmark_releases/kalshi/repricing/v1",
+      "manifest_file": "/Users/sneddy/research/polymarket_research/benchmark_releases/kalshi/repricing/v1/manifest.json",
+      "materialization": {
+        "market_timeseries_rows": 203314679,
+        "markets": 8026,
+        "rows": 1383645
+      }
+    },
+    "terminal": {
+      "bundle_dir": "/Users/sneddy/research/polymarket_research/benchmark_releases/kalshi/terminal/v1",
+      "manifest_file": "/Users/sneddy/research/polymarket_research/benchmark_releases/kalshi/terminal/v1/manifest.json",
+      "materialization": {
+        "market_timeseries_rows": 94203240,
+        "markets": 3480,
+        "rows": 6115
+      }
+    }
+  },
+  "version": "v1"
+}

@@ -1,0 +1,169 @@
+{
+  "config": {
+    "decisive_threshold": 0.95,
+    "min_history_points": 24,
+    "min_prefix_age_hours": 6.0,
+    "min_time_to_decisive_hours": 1.0,
+    "ordinal_bin_edges_hours": [
+      24.0,
+      72.0
+    ],
+    "ordinal_bin_labels": [
+      "short",
+      "medium",
+      "long"
+    ],
+    "sample_every_hours": 12,
+    "show_progress": true,
+    "split_on": "decisive_timestamp_utc",
+    "split_timestamp_utc": null,
+    "target_market_only": true,
+    "train_fraction": 0.8
+  },
+  "decisive_side_distribution": {
+    "by_split": {
+      "test": {
+        "no": 65295,
+        "yes": 41768
+      },
+      "train": {
+        "no": 653748,
+        "yes": 247277
+      }
+    },
+    "overall": {
+      "no": 719043,
+      "yes": 289045
+    }
+  },
+  "example_columns": [
+    "market_id",
+    "cutoff_timestamp_utc",
+    "market_slug",
+    "question",
+    "created_at",
+    "end_date",
+    "platform_category",
+    "research_category",
+    "family_id",
+    "prefix_rows",
+    "cutoff_age_hours",
+    "current_yes_probability",
+    "confidence_margin",
+    "distance_to_yes_decisive",
+    "distance_to_no_decisive",
+    "decisive_threshold",
+    "split"
+  ],
+  "families": 3964,
+  "market_timeseries_columns": [
+    "market_id",
+    "timestamp_utc",
+    "yes_probability"
+  ],
+  "market_timeseries_rows": 179840929,
+  "markets": 6710,
+  "name": "decisiveness_benchmark",
+  "observable_information": "target market metadata and market-level probability history up to the cutoff timestamp",
+  "ordinal_bin_edges_hours": [
+    24.0,
+    72.0
+  ],
+  "ordinal_bin_labels": [
+    "short",
+    "medium",
+    "long"
+  ],
+  "ordinal_label_distribution": {
+    "by_split": {
+      "test": {
+        "long": 98196,
+        "medium": 4968,
+        "short": 3899
+      },
+      "train": {
+        "long": 864830,
+        "medium": 20605,
+        "short": 15590
+      }
+    },
+    "overall": {
+      "long": 963026,
+      "medium": 25573,
+      "short": 19489
+    }
+  },
+  "release_name": "kalshi-decisive-belief-tau95",
+  "rows": 1008088,
+  "schema_version": 1,
+  "source": "kalshi",
+  "split_audit": {
+    "family_overlap": {
+      "families_by_split": {
+        "test": 811,
+        "train": 3267
+      },
+      "families_with_multiple_splits": 114,
+      "overlapping_family_ids_sample": [
+        "unknown::::2 us netflix movie on feb",
+        "unknown::::2 us netflix show on feb",
+        "unknown::::any individual connection with minnesota daycare",
+        "unknown::::any member trump s cabinet leave",
+        "unknown::::aperture 1 on billboard hot 100",
+        "unknown::::artist with most monthly spotify listeners",
+        "unknown::::average gas prices above 2 90",
+        "unknown::::average gas prices above 2 95",
+        "unknown::::average gas prices above 3 00",
+        "unknown::::average gas prices above 3 018",
+        "unknown::::average gas prices above 3 05",
+        "unknown::::average gas prices above 3 10",
+        "unknown::::average gas prices above 3 15",
+        "unknown::::average gas prices above 3 20",
+        "unknown::::average gas prices above 3 220",
+        "unknown::::average gas prices above 3 30",
+        "unknown::::average gas prices above 3 35",
+        "unknown::::average gas prices above 3 40",
+        "unknown::::average gas prices above 4 60",
+        "unknown::::average gas prices above 4 70"
+      ],
+      "pairwise_family_overlap": {
+        "test__train": 114
+      }
+    },
+    "pairwise_unit_overlap": {
+      "test__train": 0
+    },
+    "rows_by_split": {
+      "test": 107063,
+      "train": 901025
+    },
+    "split_unit": "market_id",
+    "units_by_split": {
+      "test": 1342,
+      "train": 5368
+    },
+    "units_with_multiple_splits": 0
+  },
+  "split_counts": {
+    "test": 107063,
+    "train": 901025
+  },
+  "split_policy": {
+    "assignment_rule": "all cutoff examples derived from one market_id inherit a single market-level split",
+    "split_on": "decisive_timestamp_utc",
+    "split_unit": "market_id",
+    "timestamp_key_definition": "durable decisive timestamp when split_on=decisive_timestamp_utc; market end_date when split_on=end_date"
+  },
+  "target_columns": [
+    "market_id",
+    "cutoff_timestamp_utc",
+    "decisive_timestamp_utc",
+    "label",
+    "label_name",
+    "hours_to_decisive",
+    "decisive_side",
+    "split"
+  ],
+  "target_type": "ordinal decisive-horizon label plus continuous hours-to-decisive auxiliary target",
+  "task": "durable_decisive_belief_formation_prediction"
+}
